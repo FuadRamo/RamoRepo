@@ -1,0 +1,54 @@
+<svg width="640" height="580" viewBox="0 0 640 580" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse">
+<path d="M0,0 L10,5 L0,10 z" fill="black"/>
+</marker>
+</defs>
+<style>
+text{font-family:Arial,Helvetica,sans-serif;fill:black;}
+.title{font-size:16px;font-weight:bold;text-anchor:middle;}
+.label{font-size:13px;text-anchor:middle;}
+.small{font-size:11px;text-anchor:middle;}
+.box{fill:white;stroke:black;stroke-width:1.5;}
+.edge{stroke:black;stroke-width:1.5;fill:none;}
+</style>
+
+<text x="320" y="20" class="title">UML activity diagram — storage &amp; notification</text>
+
+<circle cx="320" cy="50" r="8" fill="black"/>
+<text x="320" y="42" class="small">File confirmed valid</text>
+<line x1="320" y1="58" x2="320" y2="90" class="edge" marker-end="url(#arrow)"/>
+
+<rect x="190" y="90" width="260" height="60" rx="20" class="box"/>
+<text x="320" y="116" class="label">Queue for staff review</text>
+<text x="320" y="134" class="small">Thumbnail + order info</text>
+
+<line x1="320" y1="150" x2="320" y2="180" class="edge" marker-end="url(#arrow)"/>
+
+<rect x="180" y="180" width="280" height="60" rx="20" class="box"/>
+<text x="320" y="206" class="label">Staff confirms file</text>
+<text x="320" y="224" class="small">(dashboard action)</text>
+
+<line x1="320" y1="240" x2="320" y2="270" class="edge" marker-end="url(#arrow)"/>
+
+<rect x="190" y="270" width="260" height="60" rx="20" class="box"/>
+<text x="320" y="296" class="label">Move &amp; upload</text>
+<text x="320" y="314" class="small">Orders/{platform}/{id}</text>
+
+<line x1="320" y1="330" x2="320" y2="360" class="edge" marker-end="url(#arrow)"/>
+
+<rect x="180" y="360" width="280" height="50" rx="20" class="box"/>
+<text x="320" y="390" class="label">Update database record</text>
+
+<line x1="320" y1="410" x2="320" y2="440" class="edge" marker-end="url(#arrow)"/>
+
+<rect x="190" y="440" width="260" height="60" rx="20" class="box"/>
+<text x="320" y="466" class="label">Notify &amp; auto-reply</text>
+<text x="320" y="484" class="small">Slack API + platform msg</text>
+
+<line x1="320" y1="500" x2="320" y2="526" class="edge" marker-end="url(#arrow)"/>
+
+<circle cx="320" cy="540" r="12" class="box"/>
+<circle cx="320" cy="540" r="6" fill="black"/>
+
+</svg>
