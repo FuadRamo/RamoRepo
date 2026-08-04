@@ -1,0 +1,104 @@
+flowchart TD
+    %% Global Styling
+    classDef platform fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b;
+    classDef n8nEngine fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c;
+    classDef matching fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100;
+    classDef hitl fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1b5e20;
+    classDef storage fill:#ede7f6,stroke:#512da8,stroke-width:2px,color:#311b92;
+    classDef exception fill:#ffebee,stroke:#d32f2f,stroke-width:2px,color:#b71c1c;
+
+    subgraph PHASE1_2 ["Phase 1 & 2: Multi-Channel Ingestion & Webhook Triggers"]
+        direction TB
+        S1["Shopee Open Platform<br/>(webchat_push Code 10)"]:::platform
+        L1["Lazada IM API<br/>(LPM / /im/message/list)"]:::platform
+        W1["WhatsApp Cloud API<br/>(Meta Webhook Event)"]:::platform
+    end
+
+    subgraph PHASE2_3 ["Phase 2 & 3: n8n Workflow Orchestration & Media Extraction"]
+        direction TB
+        N_WH["n8n Universal Webhook Receiver"]:::n8nEngine
+        N_FILT{"Has File / Media<br/>Attachment?"}:::n8nEngine
+        
+        N_AUTH_S["Fetch Shopee Media<br/>via Chat API"]:::n8nEngine
+        N_AUTH_L["Fetch Lazada Media<br/>via IM API (Template 3/6)"]:::n8nEngine
+        N_AUTH_W["Fetch Meta Media URL<br/>(GET /media_id) & Stream Binary"]:::n8nEngine
+        
+        N_NORM["Normalize Payload & Binary Buffer<br/>{platform, chat_id, media_url, mime_type}"]:::n8nEngine
+    end
+
+    subgraph PHASE4 ["Phase 4: Customer & Order ID Matching Engine"]
+        direction TB
+        M_DECISION{"Has Direct<br/>Order ID in Payload?"}:::matching
+        M_DIRECT["Extract Order ID<br/>(Shopee / Lazada metadata)"]:::matching
+        M_PHONE["Lookup Customer Order by Phone<br/>(OrderHub Database Search)"]:::matching
+        M_CHECK_MATCH{"Matching Order<br/>Found in DB?"}:::matching
+        M_FLAG_UNMATCHED["Tag as 'Unmatched Order'<br/>(Pending Customer Ref)"]:::matching
+    end
+
+    subgraph PHASE5 ["Phase 5: Staff Review & Confirmation Queue (HITL UI)"]
+        direction TB
+        H_QUEUE["OrderHub Staff Review Queue<br/>(Dashboard Notification)"]:::hitl
+        H_COUNT{"Number of<br/>Attachments?"}:::hitl
+        H_SINGLE["One-Click Staff Confirmation<br/>(Quick Verify)"]:::hitl
+        H_MULTI["Multi-File Preview Panel<br/>(Staff Selects Print Design)"]:::hitl
+        H_CONFIRMED["Confirmed File Selected"]:::hitl
+    end
+
+    subgraph PHASE6_7 ["Phase 6 & 7: Storage Engine, Pathing & OrderHub DB Sync"]
+        direction TB
+        ST_PATH["Generate Directory Path:<br/>/Orders/{Platform}/{OrderID}_{CustomerName}/"]:::storage
+        ST_WRITE["Save High-Res Binary File & Thumbnail"]:::storage
+        ST_DB["Update OrderHub DB (SQLite)<br/>design_file_path, confirmed_by, status='FILE_READY'"]:::storage
+        ST_NOTIF["Notify Production Team<br/>(Slack / System Dashboard)"]:::storage
+    end
+
+    subgraph PHASE8 ["Phase 8: Exception Handling & Failure Recovery"]
+        direction TB
+        EX_EXPIRED["Temporary URL Expired?<br/>(Meta / Marketplace Token)"]:::exception
+        EX_REFRESH["n8n Auto Refresh OAuth Token<br/>& Re-fetch Media"]:::exception
+        EX_NO_FILE["No Attachment Found<br/>(Text-Only Chat Message)"]:::exception
+        EX_LOG["Log System Error & Push Alert<br/>to Admin Dashboard"]:::exception
+    end
+
+    %% Flow Connections
+    S1 -->|Webhook POST| N_WH
+    L1 -->|Push / Poll| N_WH
+    W1 -->|Webhook POST| N_WH
+
+    N_WH --> N_FILT
+    N_FILT -->|No| EX_NO_FILE
+    N_FILT -->|Yes| N_DECIDE_PLAT{"Platform?"}:::n8nEngine
+
+    N_DECIDE_PLAT -->|Shopee| N_AUTH_S
+    N_DECIDE_PLAT -->|Lazada| N_AUTH_L
+    N_DECIDE_PLAT -->|WhatsApp| N_AUTH_W
+
+    N_AUTH_S --> EX_EXPIRED
+    N_AUTH_L --> EX_EXPIRED
+    N_AUTH_W --> EX_EXPIRED
+    
+    EX_EXPIRED -->|Auth Error| EX_REFRESH
+    EX_REFRESH -->|Retry Fetch| N_NORM
+    EX_EXPIRED -->|Valid Stream| N_NORM
+
+    N_NORM --> M_DECISION
+    
+    M_DECISION -->|Yes: Shopee/Lazada| M_DIRECT
+    M_DECISION -->|No: WhatsApp| M_PHONE
+
+    M_DIRECT --> H_QUEUE
+    M_PHONE --> M_CHECK_MATCH
+    M_CHECK_MATCH -->|Found| H_QUEUE
+    M_CHECK_MATCH -->|Not Found| M_FLAG_UNMATCHED --> H_QUEUE
+
+    H_QUEUE --> H_COUNT
+    H_COUNT -->|Single Attachment| H_SINGLE --> H_CONFIRMED
+    H_COUNT -->|Multiple Attachments| H_MULTI --> H_CONFIRMED
+
+    H_CONFIRMED --> ST_PATH
+    ST_PATH --> ST_WRITE
+    ST_WRITE --> ST_DB
+    ST_DB --> ST_NOTIF
+
+    %% Exception Routing
+    EX_NO_FILE --> EX_LOG
