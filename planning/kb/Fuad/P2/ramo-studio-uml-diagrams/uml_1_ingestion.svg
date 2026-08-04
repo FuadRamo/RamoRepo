@@ -1,0 +1,76 @@
+<svg width="640" height="500" viewBox="0 0 640 500" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse">
+<path d="M0,0 L10,5 L0,10 z" fill="black"/>
+</marker>
+</defs>
+<style>
+text{font-family:Arial,Helvetica,sans-serif;fill:black;}
+.title{font-size:16px;font-weight:bold;text-anchor:middle;}
+.label{font-size:13px;text-anchor:middle;}
+.small{font-size:11px;text-anchor:middle;}
+.box{fill:white;stroke:black;stroke-width:1.5;}
+.bar{fill:black;}
+.edge{stroke:black;stroke-width:1.5;fill:none;}
+</style>
+
+<text x="320" y="20" class="title">UML activity diagram — file ingestion</text>
+
+<circle cx="110" cy="50" r="8" fill="black"/>
+<text x="110" y="42" class="small">Shopee</text>
+<circle cx="320" cy="50" r="8" fill="black"/>
+<text x="320" y="42" class="small">Lazada</text>
+<circle cx="530" cy="50" r="8" fill="black"/>
+<text x="530" y="42" class="small">WhatsApp API</text>
+
+<line x1="110" y1="58" x2="110" y2="90" class="edge" marker-end="url(#arrow)"/>
+<line x1="320" y1="58" x2="320" y2="90" class="edge" marker-end="url(#arrow)"/>
+<line x1="530" y1="58" x2="530" y2="90" class="edge" marker-end="url(#arrow)"/>
+
+<rect x="25" y="90" width="170" height="50" rx="20" class="box"/>
+<text x="110" y="120" class="label">Verify signature</text>
+<rect x="235" y="90" width="170" height="50" rx="20" class="box"/>
+<text x="320" y="120" class="label">Verify signature</text>
+<rect x="445" y="90" width="170" height="50" rx="20" class="box"/>
+<text x="530" y="120" class="label">Verify signature</text>
+
+<line x1="110" y1="140" x2="110" y2="170" class="edge" marker-end="url(#arrow)"/>
+<line x1="320" y1="140" x2="320" y2="170" class="edge" marker-end="url(#arrow)"/>
+<line x1="530" y1="140" x2="530" y2="170" class="edge" marker-end="url(#arrow)"/>
+
+<rect x="25" y="170" width="170" height="60" rx="20" class="box"/>
+<text x="110" y="196" class="label">Extract fields</text>
+<text x="110" y="214" class="small">order_sn + url</text>
+
+<rect x="235" y="170" width="170" height="60" rx="20" class="box"/>
+<text x="320" y="196" class="label">Extract fields</text>
+<text x="320" y="214" class="small">order_id + url</text>
+
+<rect x="445" y="170" width="170" height="60" rx="20" class="box"/>
+<text x="530" y="196" class="label">Extract fields</text>
+<text x="530" y="214" class="small">phone + media_id</text>
+
+<line x1="110" y1="230" x2="110" y2="256" class="edge"/>
+<line x1="320" y1="230" x2="320" y2="256" class="edge"/>
+<line x1="530" y1="230" x2="530" y2="256" class="edge"/>
+
+<rect x="40" y="256" width="560" height="8" class="bar"/>
+
+<line x1="320" y1="264" x2="320" y2="296" class="edge" marker-end="url(#arrow)"/>
+
+<rect x="220" y="296" width="200" height="50" rx="20" class="box"/>
+<text x="320" y="326" class="label">Fetch &amp; download file</text>
+
+<line x1="320" y1="346" x2="320" y2="376" class="edge" marker-end="url(#arrow)"/>
+
+<rect x="220" y="376" width="200" height="50" rx="20" class="box"/>
+<text x="320" y="406" class="label">Save to temp storage</text>
+
+<line x1="320" y1="426" x2="320" y2="452" class="edge" marker-end="url(#arrow)"/>
+
+<circle cx="320" cy="466" r="12" class="box"/>
+<circle cx="320" cy="466" r="6" fill="black"/>
+
+<text x="320" y="492" class="small">Continues to validation &amp; matching flow</text>
+
+</svg>
