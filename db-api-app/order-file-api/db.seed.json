@@ -1,0 +1,88 @@
+{
+  "orders": [
+    {
+      "order_id": "ORD_456",
+      "external_order_id": "260727QURVFYCT",
+      "platform": "shopee",
+      "customer_name": "Ali Bin Ahmad",
+      "phone_number": "+60123456789",
+      "email": "ali@example.com",
+      "items": [
+        {
+          "order_item_id": "ITEM_01",
+          "product_name": "Sticker A5",
+          "sku": "STICKER-A5",
+          "variation": "Glossy, 5cm",
+          "quantity": 100
+        },
+        {
+          "order_item_id": "ITEM_02",
+          "product_name": "Business Card",
+          "sku": "BCARD-STD",
+          "variation": "Matte",
+          "quantity": 500
+        }
+      ]
+    }
+  ],
+  "attachments": [
+    {
+      "attachment_id": "ATT_123",
+      "job_id": "JOB_789",
+      "order_id": "ORD_456",
+      "order_item_id": "ITEM_01",
+      "product_name": "Sticker A5",
+      "sku": "STICKER-A5",
+      "variation": "Glossy, 5cm",
+      "quantity": 100,
+      "original_filename": "customer-design.pdf",
+      "mime_type": "application/pdf",
+      "file_size": 5242880,
+      "file_number": 1,
+      "total_files": 2,
+      "customer_notes": "Remove the background",
+      "sample_file": "customer-design.pdf"
+    },
+    {
+      "attachment_id": "ATT_124",
+      "job_id": "JOB_790",
+      "order_id": "ORD_456",
+      "order_item_id": "",
+      "product_name": "",
+      "sku": "",
+      "variation": "",
+      "quantity": null,
+      "original_filename": "biz-card-design.ai",
+      "mime_type": "application/postscript",
+      "file_size": 1048576,
+      "file_number": 2,
+      "total_files": 2,
+      "customer_notes": "",
+      "sample_file": "biz-card-design.ai"
+    }
+  ],
+  "jobs": [
+    {
+      "job_id": "JOB_789",
+      "attachment_id": "ATT_123",
+      "status": "pending",
+      "final_filename": null,
+      "nas_path": null,
+      "checksum_sha256": null,
+      "error": null,
+      "created_at": "2026-08-05T00:00:00.000Z",
+      "updated_at": null
+    },
+    {
+      "job_id": "JOB_790",
+      "attachment_id": "ATT_124",
+      "status": "pending",
+      "final_filename": null,
+      "nas_path": null,
+      "checksum_sha256": null,
+      "error": null,
+      "created_at": "2026-08-05T00:00:00.000Z",
+      "updated_at": null
+    }
+  ]
+}
