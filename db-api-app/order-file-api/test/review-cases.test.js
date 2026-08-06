@@ -60,6 +60,13 @@ async function createReviewCase(overrides = {}) {
   });
 }
 
+test("browser preflight requests are allowed", async () => {
+  const response = await fetch(`${baseUrl}/api/review-cases`, { method: "OPTIONS" });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("access-control-allow-origin"), "*");
+  assert.match(response.headers.get("access-control-allow-methods"), /PATCH/);
+});
+
 test("creating a review case returns 201", async () => {
   const { response, body } = await createReviewCase();
   assert.equal(response.status, 201);

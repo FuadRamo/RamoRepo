@@ -98,19 +98,52 @@
       "created_at": "2026-08-06T04:07:54.196Z",
       "updated_at": "2026-08-06T04:11:22.246Z",
       "resolved_at": "2026-08-06T04:11:22.246Z"
+    },
+    {
+      "review_id": "REV_26A4ABFAD7594A708B53F72284AB3C8D",
+      "job_id": "JOB_789",
+      "order_id": "ORD_456",
+      "external_order_id": "260727QURVFYCT",
+      "attachment_id": "ATT_123",
+      "reason": "download_failed",
+      "status": "resolved",
+      "priority": "normal",
+      "source_workflow": "Downloading attchments to NAS",
+      "source_node": "Download attachments",
+      "summary": "The attachment could not be downloaded after retries",
+      "error_message": "The connection cannot be established, this usually occurs due to an incorrect host (domain) value",
+      "confidence": 0.95,
+      "context": {
+        "platform": "shopee",
+        "original_filename": "test.pdf",
+        "order_item_id": "ITEM_01",
+        "sku": "STICKER-A5",
+        "product_name": "Sticker A5",
+        "download_url": "https://www.w3.og/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+        "test_mode": true
+      },
+      "dedupe_key": "JOB_789:download_failed:Download attachments",
+      "assigned_to": null,
+      "reviewer_notes": null,
+      "resolution": "Reviewed and resolved",
+      "corrected_data": null,
+      "customer_contacted_at": null,
+      "created_at": "2026-08-06T06:33:27.256Z",
+      "updated_at": "2026-08-06T06:33:45.158Z",
+      "resolved_at": "2026-08-06T06:33:45.158Z"
     }
   ],
   "jobs": [
     {
       "job_id": "JOB_789",
       "attachment_id": "ATT_123",
-      "status": "completed",
+      "status": "human_review",
       "final_filename": "260727QURVFYCT_ITEM_01_STICKER-A5_01.pdf",
       "nas_path": "_TESTS\\shopee\\260727QURVFYCT\\ITEM_01_STICKER-A5\\260727QURVFYCT_ITEM_01_STICKER-A5_01.pdf",
       "checksum_sha256": "3df79d34abbca99308e79cb94461c1893582604d68329a41fd4bec1885e6adb4",
-      "error": null,
+      "error": "The attachment could not be downloaded after retries",
       "created_at": "2026-08-05T00:00:00.000Z",
-      "updated_at": "2026-08-06T04:12:31.801Z"
+      "updated_at": "2026-08-06T06:33:27.256Z"
     },
     {
       "job_id": "JOB_790",
