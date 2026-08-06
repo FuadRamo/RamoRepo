@@ -1,0 +1,69 @@
+erDiagram
+    ORDERS ||--o{ ORDER_ITEMS : "has"
+    ORDERS ||--o{ MESSAGES : "matched by (nullable)"
+    ORDERS ||--o{ FILES : "has"
+    ORDER_ITEMS ||--o{ FILES : "matched by (nullable)"
+    FILES ||--|| FILE_JOBS : "processed via"
+
+    ORDERS {
+        uuid id PK
+        text platform "CHECK: shopee, lazada, ... (extensible)"
+        text external_order_id "unique per (platform, external_order_id)"
+        text tracking_number
+        text customer_name
+        text phone_number
+        text email
+        text status "new, in_progress, human_review, completed"
+        text review_reason "nullable, CHECK: 5 spec-defined reasons"
+        jsonb raw_payload "original platform webhook payload"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    ORDER_ITEMS {
+        uuid id PK
+        uuid order_id FK
+        text product_name
+        text sku
+        text variation
+        int quantity
+    }
+
+    MESSAGES {
+        uuid id PK
+        uuid order_id FK "nullable - may arrive before order match"
+        text platform "whatsapp, email, shopee_chat, lazada_chat"
+        text conversation_id
+        text external_message_id
+        text sender
+        text receiver
+        text direction "inbound, outbound"
+        text content
+        timestamptz message_time
+        jsonb raw_payload
+        timestamptz created_at
+    }
+
+    FILES {
+        uuid id PK
+        uuid order_id FK
+        uuid order_item_id FK "nullable - unmatched until AI File Agent confirms"
+        uuid message_id FK "nullable - which message the file came from"
+        text original_filename
+        text mime_type
+        bigint file_size
+        text nas_path "nullable until job completes - source of truth for bytes"
+        text customer_notes
+        timestamptz created_at
+    }
+
+    FILE_JOBS {
+        uuid id PK
+        uuid file_id FK
+        text status "pending, completed, human_review, failed"
+        text final_filename
+        text checksum_sha256
+        text error
+        timestamptz created_at
+        timestamptz updated_at
+    }

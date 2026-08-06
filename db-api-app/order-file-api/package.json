@@ -13,5 +13,8 @@
   },
   "dependencies": {
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "^1.8.0"
   }
 }

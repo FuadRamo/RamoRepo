@@ -1,0 +1,54 @@
+flowchart TD
+    subgraph Platforms["Platform sources"]
+        P1[Shopee / Lazada order webhook]
+        P2[WhatsApp / Email / Shopee Chat / Lazada Chat]
+    end
+
+    subgraph API["order-file-api : port 3000 (this project)"]
+        C1["POST /api/orders\n(Create)"]
+        C2["POST /api/messages\n(Create)"]
+        R1["GET /api/orders\nGET /api/messages?order_id=&conversation_id=\n(Read)"]
+        U1["PATCH /api/orders/:id\n(Update status / review_reason)"]
+        U2["PATCH /api/file-jobs/:id\n(Update processing status)"]
+        D1["(no hard deletes - status-based\nsoft close only, see planning doc)"]
+    end
+
+    subgraph DB["Supabase Postgres"]
+        T1[(orders + order_items)]
+        T2[(messages)]
+        T3[(files + file_jobs)]
+    end
+
+    subgraph Consumers["Other modules (read + write via API only)"]
+        N1[Automation Engine / n8n]
+        N2[AI Search Agent]
+        N3[AI File Agent]
+        N4[Human Review UI]
+    end
+
+    subgraph Storage["Local Network Storage (NAS)"]
+        S1[(Renamed, organized files\nby order folder)]
+    end
+
+    P1 -->|"new order webhook"| C1 --> T1
+    P2 -->|"synced message"| C2 --> T2
+
+    N1 -->|"poll / read"| R1
+    R1 --> T1
+    R1 --> T2
+
+    N2 -->|"match order <-> conversation"| U1 --> T1
+    N2 -->|"link message.order_id"| C2
+
+    N3 -->|"download attachment,\nsave to NAS"| S1
+    N3 -->|"report result"| U2 --> T3
+    T3 -->|"nas_path stored,\nnever the file bytes"| S1
+
+    N1 -->|"no match after retry limit"| U1
+    N4 -->|"review + correct"| U1
+    U1 -->|"status = human_review\n+ review_reason"| T1
+
+    classDef api fill:#1e3a5f,stroke:#5b9bd5,color:#fff
+    classDef db fill:#2d1e4a,stroke:#9b6dd6,color:#fff
+    class C1,C2,R1,U1,U2,D1 api
+    class T1,T2,T3 db
