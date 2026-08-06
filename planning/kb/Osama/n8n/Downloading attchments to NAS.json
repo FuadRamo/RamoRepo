@@ -1,0 +1,266 @@
+{
+  "name": "Downloading attchments to NAS",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "attachment-ready",
+        "options": {
+          "responseCode": {
+            "values": {
+              "responseCode": "customCode",
+              "customCode": 202
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "45e3d85d-99aa-41be-b359-588800fcac12",
+      "name": "Webhook",
+      "webhookId": "1bec0341-95b0-4f36-9262-c8f801c87d1b"
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.body ?? $json;\n\n// Accept either a direct payload or:\n// { event_type: \"attachment.ready\", data: {...} }\nconst input = payload.data ?? payload;\n\nconst eventType =\n  payload.event_type ??\n  input.event_type ??\n  \"attachment.ready\";\n\nif (\n  eventType !== \"attachment.ready\" &&\n  eventType !== \"attachment_ready\"\n) {\n  throw new Error(`Unsupported event type: ${eventType}`);\n}\n\n// -------------------------\n// Required fields\n// -------------------------\n\nconst requiredFields = [\n  \"job_id\",\n  \"attachment_id\",\n  \"external_order_id\",\n  \"platform\",\n  \"original_filename\",\n  \"download_url\"\n];\n\nfor (const field of requiredFields) {\n  if (\n    input[field] === undefined ||\n    input[field] === null ||\n    String(input[field]).trim() === \"\"\n  ) {\n    throw new Error(`Missing required field: ${field}`);\n  }\n}\n\n// -------------------------\n// File number\n// -------------------------\n\nconst fileNumber = Number(input.file_number ?? 1);\n\nif (!Number.isInteger(fileNumber) || fileNumber < 1) {\n  throw new Error(\"file_number must be a positive integer\");\n}\n\n// -------------------------\n// Download URL\n// -------------------------\n\nconst downloadUrl = String(input.download_url).trim();\n\nif (!/^https?:\\/\\/[^\\s]+$/i.test(downloadUrl)) {\n  throw new Error(\n    `Invalid download_url: ${input.download_url}`\n  );\n}\n\n// -------------------------\n// Safe folder/file names\n// -------------------------\n\nfunction safeName(\n  value,\n  fallback = \"unknown\",\n  maximumLength = 60\n) {\n  const cleaned = String(value ?? \"\")\n    .normalize(\"NFKC\")\n    .trim()\n    .replace(/[<>:\"/\\\\|?*\\x00-\\x1F]/g, \"-\")\n    .replace(/\\s+/g, \"-\")\n    .replace(/-+/g, \"-\")\n    .replace(/[. ]+$/g, \"\")\n    .replace(/^[-. ]+|[-. ]+$/g, \"\");\n\n  return cleaned.substring(0, maximumLength) || fallback;\n}\n\nfunction strictIdentifier(\n  value,\n  fieldName,\n  maximumLength = 50\n) {\n  const identifier = String(value ?? \"\")\n    .trim()\n    .toUpperCase();\n\n  if (!identifier) {\n    throw new Error(`Missing ${fieldName}`);\n  }\n\n  if (identifier.length > maximumLength) {\n    throw new Error(\n      `${fieldName} exceeds ${maximumLength} characters`\n    );\n  }\n\n  if (!/^[A-Z0-9][A-Z0-9_-]*$/.test(identifier)) {\n    throw new Error(\n      `Invalid ${fieldName}: ${value}`\n    );\n  }\n\n  return identifier;\n}\n\n// -------------------------\n// Strict platform names\n// -------------------------\n\nconst allowedPlatforms = new Set([\n  \"shopee\",\n  \"lazada\",\n  \"website\",\n  \"whatsapp\"\n]);\n\nconst platform = String(input.platform)\n  .trim()\n  .toLowerCase();\n\nif (!allowedPlatforms.has(platform)) {\n  throw new Error(\n    `Unsupported platform: ${input.platform}`\n  );\n}\n\n// -------------------------\n// Strict order information\n// -------------------------\n\nconst testMode = input.test_mode === true;\n\nconst order = strictIdentifier(\n  input.external_order_id,\n  \"external_order_id\",\n  40\n);\n\nconst item = input.order_item_id\n  ? strictIdentifier(\n      input.order_item_id,\n      \"order_item_id\",\n      40\n    )\n  : \"UNMATCHED\";\n\nif (\n  !testMode &&\n  /^(STRESS|LOAD|INVALID)[_-]/.test(order)\n) {\n  throw new Error(\n    `Test order ID cannot be used in production mode: ${order}`\n  );\n}\n\n// Prefer SKU because it is more stable than product name\nconst skuSource =\n  input.sku ||\n  input.product_name;\n\nif (!skuSource) {\n  throw new Error(\n    \"Either sku or product_name is required\"\n  );\n}\n\nconst sku = safeName(\n  skuSource,\n  \"UNMATCHED\",\n  40\n).toUpperCase();\n\n// -------------------------\n// Original extension\n// Finalize File Extension can correct it later\n// using the downloaded MIME type.\n// -------------------------\n\nconst originalFilename = safeName(\n  input.original_filename,\n  \"attachment\",\n  100\n);\n\nconst extensionMatch = originalFilename.match(\n  /(\\.[a-zA-Z0-9]{1,10})$/\n);\n\nconst extension = extensionMatch\n  ? extensionMatch[1].toLowerCase()\n  : \"\";\n\n// -------------------------\n// Final paths\n// -------------------------\n\nconst sequence = String(fileNumber).padStart(2, \"0\");\n\nconst rootFolder = testMode\n  ? \"_TESTS\"\n  : \"Orders\";\n\nconst relativeFolder =\n  `${rootFolder}/${platform}/${order}/${item}_${sku}`;\n\nconst finalFilename =\n  `${order}_${item}_${sku}_${sequence}${extension}`;\n\nreturn [\n  {\n    json: {\n      ...input,\n      download_url: downloadUrl,\n      event_type: \"attachment.ready\",\n      test_mode: testMode,\n      file_number: fileNumber,\n      relative_folder: relativeFolder,\n      final_filename: finalFilename,\n      temporary_filename: `${finalFilename}.part`,\n      relative_final_path:\n        `${relativeFolder}/${finalFilename}`\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "feda8c4e-27f2-4a3a-aa11-76d32ff47900",
+      "name": "Prepare File Paths"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.download_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "id": "4716224f-48e6-48c4-92c3-df48512f0433",
+      "name": "Download attachments",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://knock-due-phone-specific.trycloudflare.com/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "relative_folder",
+              "value": "={{ $json.relative_folder }}"
+            },
+            {
+              "name": "final_filename",
+              "value": "={{ $json.final_filename }}"
+            },
+            {
+              "name": "job_id",
+              "value": "={{ $json.job_id }}"
+            },
+            {
+              "name": "attachment_id",
+              "value": "={{ $json.attachment_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        0
+      ],
+      "id": "e416f7b8-8f57-4002-9bf9-26511f55f1a8",
+      "name": "Upload to Ramo Receiver",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://sympathy-magnitude-mae-appliance.trycloudflare.com/api/file-jobs/' + $json.job_id }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  {\n    status: \"completed\",\n    final_filename: $json.final_filename,\n    nas_path: $json.relative_path,\n    checksum_sha256: $json.checksum_sha256\n  }\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "e20d9e7d-1257-4a8c-92d4-410dde28e636",
+      "name": "Report Completed to Database"
+    },
+    {
+      "parameters": {
+        "jsCode": "const downloadedItem = $input.first();\nconst metadata = $(\"Prepare File Paths\").first().json;\nconst binaryFile = downloadedItem.binary?.data;\n\nif (!binaryFile) {\n  throw new Error(\"Downloaded binary data is missing\");\n}\n\nfunction getExtension(filename) {\n  const match = String(filename || \"\")\n    .toLowerCase()\n    .match(/\\.([a-z0-9]+)$/);\n\n  return match ? match[1] : \"\";\n}\n\nfunction cleanExtension(extension) {\n  return String(extension || \"\")\n    .toLowerCase()\n    .replace(/^\\./, \"\")\n    .replace(/[^a-z0-9]/g, \"\");\n}\n\nconst mimeType = String(binaryFile.mimeType || \"\")\n  .split(\";\")[0]\n  .trim()\n  .toLowerCase();\n\nconst originalExtension = getExtension(\n  metadata.original_filename\n);\n\nconst binaryExtension =\n  cleanExtension(binaryFile.fileExtension) ||\n  getExtension(binaryFile.fileName);\n\n// Valid extensions for recognized MIME types.\n// The first extension is the default.\nconst mimeExtensions = {\n  \"application/pdf\": [\"pdf\"],\n  \"image/jpeg\": [\"jpg\", \"jpeg\", \"jpe\"],\n  \"image/png\": [\"png\"],\n  \"image/webp\": [\"webp\"],\n  \"image/gif\": [\"gif\"],\n  \"image/tiff\": [\"tif\", \"tiff\"],\n  \"image/bmp\": [\"bmp\"],\n  \"image/svg+xml\": [\"svg\"],\n  \"text/plain\": [\"txt\"],\n  \"application/zip\": [\"zip\"],\n  \"application/x-zip-compressed\": [\"zip\"],\n  \"application/vnd.adobe.photoshop\": [\"psd\"]\n};\n\nconst allowedExtensions = mimeExtensions[mimeType];\n\nlet finalExtension;\n\nif (allowedExtensions) {\n  // Preserve .jpeg instead of changing it to .jpg when valid.\n  if (allowedExtensions.includes(originalExtension)) {\n    finalExtension = originalExtension;\n  } else if (allowedExtensions.includes(binaryExtension)) {\n    finalExtension = binaryExtension;\n  } else {\n    finalExtension = allowedExtensions[0];\n  }\n} else {\n  // AI, PSD and other design files may use a generic MIME type.\n  finalExtension =\n    binaryExtension ||\n    originalExtension ||\n    \"bin\";\n}\n\nconst filenameWithoutExtension =\n  metadata.final_filename.replace(/\\.[a-z0-9]+$/i, \"\");\n\nconst finalFilename =\n  `${filenameWithoutExtension}.${finalExtension}`;\n\nreturn [\n  {\n    json: {\n      ...metadata,\n      downloaded_mime_type: mimeType,\n      original_extension: originalExtension,\n      detected_extension: finalExtension,\n      extension_changed:\n        Boolean(originalExtension) &&\n        originalExtension !== finalExtension,\n      final_filename: finalFilename,\n      temporary_filename: `${finalFilename}.part`,\n      relative_final_path:\n        `${metadata.relative_folder}/${finalFilename}`\n    },\n    binary: downloadedItem.binary\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "b8f7d5d6-5115-4445-94b7-a81db6b81cc7",
+      "name": "Finalize File Extension"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "ramostudiosama.app.n8n.cloud",
+            "user-agent": "node",
+            "content-length": "511",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "*",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "161.142.119.87",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "MY",
+            "cf-ray": "a264c90abf8313dc-KUL",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "sec-fetch-mode": "cors",
+            "x-forwarded-for": "161.142.119.87, 172.69.85.178",
+            "x-forwarded-host": "ramostudiosama.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-47-659485895b-w9zgt",
+            "x-is-trusted": "yes",
+            "x-real-ip": "161.142.119.87"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "job_id": "JOB_789",
+            "attachment_id": "ATT_123",
+            "order_id": "ORD_456",
+            "external_order_id": "260727QURVFYCT",
+            "platform": "shopee",
+            "order_item_id": "ITEM_01",
+            "product_name": "Sticker A5",
+            "sku": "STICKER-A5",
+            "variation": "Glossy, 5cm",
+            "quantity": 100,
+            "original_filename": "customer-design.pdf",
+            "mime_type": "application/pdf",
+            "file_size": 5242880,
+            "file_number": 1,
+            "total_files": 2,
+            "customer_notes": "Remove the background",
+            "download_url": "http://sympathy-magnitude-mae-appliance.trycloudflare.com/api/attachments/ATT_123/download"
+          },
+          "webhookUrl": "https://ramostudiosama.app.n8n.cloud/webhook/attachment-ready",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare File Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare File Paths": {
+      "main": [
+        [
+          {
+            "node": "Download attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download attachments": {
+      "main": [
+        [
+          {
+            "node": "Finalize File Extension",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Ramo Receiver": {
+      "main": [
+        [
+          {
+            "node": "Report Completed to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize File Extension": {
+      "main": [
+        [
+          {
+            "node": "Upload to Ramo Receiver",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "0e808cc5-9bcd-4062-b5ff-e9d0af2354c4",
+  "meta": {
+    "instanceId": "bd1c70402212cbe355f3a33cc2d75f7c9eb545cc7743b46d9a5d80593366976e"
+  },
+  "nodeGroups": [],
+  "id": "pdrBHfmLTRg4Qjp8",
+  "tags": []
+}
