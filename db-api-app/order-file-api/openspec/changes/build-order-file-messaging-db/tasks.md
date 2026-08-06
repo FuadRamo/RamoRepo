@@ -11,8 +11,10 @@
       2026-08-06, see study/06-customer-service-workflow-expansion.md
 - [ ] Open the referenced Google Drive "Task" folder once accessible and
       check for additional requirements not yet reflected here
-- [ ] Write `supabase/migrations/0001_init.sql` implementing the schema (SQL,
-      not yet applied to the live Supabase project)
+- [x] Write `supabase/migrations/20260806140000_init_schema.sql` implementing
+      the full schema (written, **not yet applied** to the live Supabase
+      project — that's a separate, explicit step: `supabase db push` or
+      running it via the SQL editor)
 - [ ] Wire `server.js` to Postgres (via `@supabase/supabase-js` or `pg`)
       instead of `db.json` — follow-up change, not this one
 - [ ] Add `POST /api/messages`, `GET /api/messages`, `POST /api/orders`,
