@@ -6,13 +6,18 @@ approach summary, not a duplicate of the sourcing.
 ## Tables
 
 ```
-orders        — one row per platform order (Shopee, Lazada, ...)
-order_items   — line items within an order (product, sku, variation, qty)
-messages      — customer conversation messages across channels, optionally
-                linked to an order once matched (nullable order_id)
-files         — attachment metadata; actual bytes live on NAS, not in Postgres
-file_jobs     — processing pipeline state for a file (download → rename →
-                organize → done), matches the existing mock's job model
+orders               — one row per platform order (Shopee, Lazada, Website, ...)
+order_items          — line items within an order (product, sku, variation, qty)
+messages             — customer conversation messages across channels, optionally
+                        linked to an order once matched (nullable order_id)
+files                — attachment metadata; actual bytes live on NAS, not in Postgres
+file_jobs            — processing pipeline state for a file (download → rename →
+                        organize → done), matches the existing mock's job model
+support_cases        — non-fulfillment requests: questions, order changes,
+                        after-sales, complaints, returns, cancellations
+invoices             — payment/billing per order (Stripe Invoice status vocabulary)
+order_status_events  — append-only audit trail of orders.status transitions
+print_jobs           — job-sheet / shipping-label print tracking per order
 ```
 
 See `../../../planning/kb/Shahid/db-design/DB-INITIAL-PLANNING.md` for the
@@ -45,8 +50,16 @@ Existing mock endpoints stay, backed by Postgres instead of `db.json`:
 New endpoints needed for the Chat Database requirement (not in the mock today):
 - `POST /api/messages` — n8n/Chat Integration pushes a synced message in
 - `GET /api/messages?order_id=&platform=&conversation_id=`
-- `PATCH /api/orders/:order_id` — status/review_reason updates
+- `PATCH /api/orders/:order_id` — status/review_reason updates (writes an
+  `order_status_events` row as a side effect, not a separate call)
 - `POST /api/orders` — new order ingestion (the workflow trigger point per spec)
+
+New endpoints for the Customer Service Workflow expansion:
+- `POST /api/support-cases`, `GET /api/support-cases?status=&case_type=`,
+  `PATCH /api/support-cases/:id`
+- `POST /api/invoices`, `PATCH /api/invoices/:id` (payment status updates)
+- `GET /api/orders/:id/status-events` (read-only audit trail)
+- `PATCH /api/print-jobs/:order_id` (mark job-sheet/label printed)
 
 ## Out of scope for this change
 

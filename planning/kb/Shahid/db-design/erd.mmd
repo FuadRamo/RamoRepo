@@ -4,16 +4,21 @@ erDiagram
     ORDERS ||--o{ FILES : "has"
     ORDER_ITEMS ||--o{ FILES : "matched by (nullable)"
     FILES ||--|| FILE_JOBS : "processed via"
+    ORDERS ||--o{ SUPPORT_CASES : "may relate to (nullable)"
+    MESSAGES ||--o{ SUPPORT_CASES : "opened from (nullable)"
+    ORDERS ||--o{ INVOICES : "billed via"
+    ORDERS ||--o{ ORDER_STATUS_EVENTS : "audit trail of"
+    ORDERS ||--o| PRINT_JOBS : "produces"
 
     ORDERS {
         uuid id PK
-        text platform "CHECK: shopee, lazada, ... (extensible)"
+        text platform "CHECK: shopee, lazada, website, ... (extensible)"
         text external_order_id "unique per (platform, external_order_id)"
         text tracking_number
         text customer_name
         text phone_number
         text email
-        text status "new, in_progress, human_review, completed"
+        text status "new, in_progress, human_review, completed, cancelled, returned"
         text review_reason "nullable, CHECK: 5 spec-defined reasons"
         jsonb raw_payload "original platform webhook payload"
         timestamptz created_at
@@ -66,4 +71,45 @@ erDiagram
         text error
         timestamptz created_at
         timestamptz updated_at
+    }
+
+    SUPPORT_CASES {
+        uuid id PK
+        uuid order_id FK "nullable - e.g. general product questions"
+        uuid message_id FK "nullable - which message opened the case"
+        text case_type "new_order, product_question, order_status, order_change, address_change, after_sales, complaint, return_request, cancel_request"
+        text status "open, in_progress, waiting_customer, resolved, closed"
+        text notes
+        timestamptz opened_at
+        timestamptz closed_at
+    }
+
+    INVOICES {
+        uuid id PK
+        uuid order_id FK
+        text invoice_number "unique"
+        numeric amount
+        text currency
+        text status "draft, sent, paid, overdue, void (Stripe Invoice vocabulary)"
+        timestamptz issued_at
+        timestamptz paid_at
+        jsonb raw_payload
+    }
+
+    ORDER_STATUS_EVENTS {
+        uuid id PK
+        uuid order_id FK
+        text from_status "nullable on first event"
+        text to_status
+        text reason
+        text changed_by "service/user identifier"
+        timestamptz created_at
+    }
+
+    PRINT_JOBS {
+        uuid id PK
+        uuid order_id FK "one per order"
+        timestamptz job_sheet_printed_at "nullable"
+        timestamptz shipping_label_printed_at "nullable"
+        text printed_by
     }

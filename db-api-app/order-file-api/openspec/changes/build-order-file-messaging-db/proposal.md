@@ -17,12 +17,18 @@ has no query/index capability, and has no migration path.
   through the existing port-3000 Express API (this API becomes the only thing
   that talks to Postgres directly — other modules keep calling `/api/*`, not
   Supabase directly).
-- Three core tables: `orders` (+ `order_items`), `messages`, `files` (+
+- Core tables: `orders` (+ `order_items`), `messages`, `files` (+
   `file_jobs` for the download/rename/organize processing pipeline already
   described in the spec's Step 4).
+- Extended tables, added after a second business spec ("Customer Service
+  Workflow," pasted 2026-08-06) widened scope beyond the automation-only
+  slice: `support_cases` (complaints/returns/cancellations/after-sales/
+  questions), `invoices` (payment tracking), `order_status_events` (audit
+  trail), `print_jobs` (job sheet / shipping label) — see
+  `study/06-customer-service-workflow-expansion.md`.
 - Every table platform-agnostic (`platform text` + `raw_payload jsonb`), so
-  Lazada/TikTok Shop/WhatsApp Business API can be added without a schema
-  migration — see `study/02-supabase-schema-design.md`.
+  Lazada/TikTok Shop/WhatsApp Business API/Website can be added without a
+  schema migration — see `study/02-supabase-schema-design.md`.
 
 ## Non-goals (this change)
 

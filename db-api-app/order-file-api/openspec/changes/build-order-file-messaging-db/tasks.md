@@ -6,6 +6,11 @@
 - [x] Write initial planning doc with full column-level schema
 - [x] Mermaid ERD of the schema
 - [x] Mermaid diagram of create/read/update/delete operation flow through the API
+- [x] Extend schema for full Customer Service Workflow (support_cases,
+      invoices, order_status_events, print_jobs) — second spec pasted
+      2026-08-06, see study/06-customer-service-workflow-expansion.md
+- [ ] Open the referenced Google Drive "Task" folder once accessible and
+      check for additional requirements not yet reflected here
 - [ ] Write `supabase/migrations/0001_init.sql` implementing the schema (SQL,
       not yet applied to the live Supabase project)
 - [ ] Wire `server.js` to Postgres (via `@supabase/supabase-js` or `pg`)

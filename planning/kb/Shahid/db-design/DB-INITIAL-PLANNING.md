@@ -28,8 +28,8 @@ Automation Engine, AI Search Agent, AI File Agent, Human Review).
 
 ## 3. Schema overview
 
-Five tables. Full column list + types: see `erd.mmd` (rendered ERD) in this
-folder. Summary:
+Nine tables. Full column list + types: see `erd.mmd` (rendered ERD) in this
+folder. Core (from the original automation-workflow spec):
 
 - **`orders`** — one row per platform order. `UNIQUE (platform,
   external_order_id)` for webhook idempotency. `status` + `review_reason`
@@ -45,6 +45,22 @@ folder. Summary:
   human_review / failed), matching the existing mock's job model exactly so
   the port-3000 API's contract doesn't need to change for callers that
   already integrate against it.
+
+Added for the full daily Customer Service Workflow (see
+`study/06-customer-service-workflow-expansion.md`):
+
+- **`support_cases`** — non-fulfillment customer requests (product questions,
+  order changes, address changes, after-sales, complaints, returns,
+  cancellations). Independent status from `orders.status` — a case can stay
+  open after the order itself is `completed`.
+- **`invoices`** — payment/billing per order. Status vocabulary adopted from
+  Stripe's Invoice object (`draft/sent/paid/overdue/void`) rather than
+  invented — see study note.
+- **`order_status_events`** — append-only audit trail of every `orders.status`
+  transition, modeled on Shopify's order timeline/events pattern. Never
+  updated or deleted.
+- **`print_jobs`** — one row per order tracking job-sheet and shipping-label
+  print timestamps.
 
 Every table has a `raw_payload jsonb` column (GIN-indexed, `jsonb_path_ops`)
 holding the untouched platform payload for audit/debugging — see
@@ -110,9 +126,22 @@ Supabase-provisioned and needs an equivalent grant on self-hosted Postgres.
 ## 8. References
 
 - `db-api-app/order-file-api/study/` — full cited research (Supabase docs,
-  PostgreSQL docs, OpenSpec docs, migration guide)
+  PostgreSQL docs, OpenSpec docs, migration guide, Stripe Invoice object,
+  Shopify order events)
 - `db-api-app/order-file-api/openspec/changes/build-order-file-messaging-db/`
   — spec-driven proposal/design/tasks/specs for this change
 - `AI-Customer-Service-Automation-Workflow.pdf` / `.jpg` (this folder) — the
-  business's own source requirement doc
+  automation-workflow source requirement doc
+- `study/06-customer-service-workflow-expansion.md` — the full daily
+  Customer Service Workflow source (pasted 2026-08-06) covering
+  payments/invoices, support cases, and print jobs
 - `erd.mmd`, `operations-flow.mmd` (this folder) — Mermaid diagrams
+
+## 9. Open question carried forward
+
+The pasted Customer Service Workflow references a Google Drive folder
+("Task") whose contents I could not open (not indexed for the connected
+Drive account — folder metadata only). If it contains additional
+requirements (mockups, field lists, existing spreadsheets), they are **not**
+reflected in this schema yet. Flag to revisit once that folder is
+accessible.
