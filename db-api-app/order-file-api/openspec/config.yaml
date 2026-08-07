@@ -1,0 +1,43 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Node.js/Express API on port 3000, Postgres via Supabase (hosted),
+  future migration target: self-hosted Postgres on a VPS.
+  Domain: order-fulfillment automation for a print/production business receiving
+  orders from multiple e-commerce platforms (Shopee, Lazada, more TBD) and customer
+  messages from multiple channels (WhatsApp, Email, Shopee Chat, Lazada Chat).
+  Core tables: orders, order_items, messages, files (attachment metadata; actual
+  files live on NAS/local network storage, not in the DB).
+  Every schema/design decision must cite a real doc/source — see /study.
+  No auth on the port-3000 API for now (internal network only, explicit choice).
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

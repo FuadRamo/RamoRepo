@@ -1,456 +1,331 @@
 /**
- * order-file-api-mock
+ * order-file-api
  * -------------------------------------------------------------------------
- * A minimal mock of "Mohammad's backend" for the AI Customer Service
- * Automation Workflow. It lets n8n be built and tested against real
- * request/response shapes before the production API exists.
+ * Backed by the live Supabase Postgres schema (see
+ * supabase/migrations/20260806140000_init_schema.sql) via db.js, which uses
+ * PostgREST + the service_role key — see db.js header for why.
  *
- * Storage: a single db.json file. No SQL, no ORM.
- *
- * Endpoints:
- *   GET   /api/attachments/:attachment_id/download   -> binary file
- *   PATCH /api/file-jobs/:job_id                      -> accept status update
- *   POST  /api/review-cases                           -> create review case
- *   GET   /api/review-cases                           -> list review cases
- *   GET   /api/review-cases/:review_id                -> get review case
- *   PATCH /api/review-cases/:review_id                -> update review case
- *   POST  /api/simulate/fire-webhook                  -> send the
- *         "attachment ready" webhook payload to a URL you provide (e.g. an
- *         n8n Webhook node's test URL), so you can trigger your workflow
- *         without waiting on the real backend.
- *
- *   Debug/read-only helpers:
- *   GET   /api/orders
- *   GET   /api/attachments
- *   GET   /api/file-jobs
- *   GET   /api/file-jobs/:job_id
- *
- * No auth is enforced right now (per "for now it's unnecessary"). See
- * README.md "Adding an API key later" for how to switch it on.
+ * No auth is enforced right now (explicit decision, internal network only
+ * — see study/02-supabase-schema-design.md and study/05-secrets-handling.md).
+ * See README.md "Adding an API key later" for how to switch it on.
  */
 
 const express = require("express");
-const crypto = require("crypto");
-const fs = require("fs");
 const path = require("path");
+const fs = require("fs");
+const db = require("./db");
 
 const app = express();
 app.use(express.json());
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", process.env.CORS_ORIGIN || "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.sendStatus(204);
-  next();
-});
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "db.json");
-const FILES_DIR = path.join(__dirname, "sample-files");
 const PORT = process.env.PORT || 3000;
 
-const REVIEW_REASONS = [
-  "no_attachment",
-  "uncertain_file_match",
-  "multiple_conversations",
-  "missing_order_information",
-  "invalid_payload",
-  "download_failed",
-  "upload_failed",
-  "unsupported_file",
-  "customer_contact_required",
-];
-const REVIEW_STATUSES = [
-  "open",
-  "in_review",
-  "waiting_customer",
-  "approved",
-  "corrected",
-  "resolved",
-];
-const REVIEW_PRIORITIES = ["low", "normal", "high", "urgent"];
-const UNRESOLVED_REVIEW_STATUSES = new Set([
-  "open",
-  "in_review",
-  "waiting_customer",
-]);
-const TERMINAL_REVIEW_STATUSES = new Set([
-  "approved",
-  "corrected",
-  "resolved",
-]);
+// ---------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------
 
-// Uncomment and set to require an API key on every request:
-// const API_KEY = process.env.API_KEY;
-// app.use((req, res, next) => {
-//   if (!API_KEY) return next();
-//   if (req.get("x-api-key") !== API_KEY) {
-//     return res.status(401).json({ error: "unauthorized" });
-//   }
-//   next();
-// });
-
-function readDB() {
-  return JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
+async function getOrderWithItems(orderId) {
+  const rows = await db.select("orders", `?id=eq.${encodeURIComponent(orderId)}&select=*,order_items(*)`);
+  return rows[0] || null;
 }
 
-function writeDB(data) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-}
+app.post("/api/orders", async (req, res) => {
+  const {
+    platform,
+    external_order_id,
+    tracking_number,
+    customer_name,
+    phone_number,
+    email,
+    items,
+    raw_payload,
+  } = req.body || {};
 
-function isObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function hasIdentifier(value) {
-  return value !== undefined && value !== null && String(value).trim() !== "";
-}
-
-function generatedDedupeKey(body) {
-  const identifier =
-    [body.job_id, body.attachment_id, body.order_id, body.external_order_id].find(
-      hasIdentifier
-    ) || "unknown";
-  return `${identifier}:${body.reason}:${body.source_node || "unknown_source"}`;
-}
-
-// ---------------------------------------------------------------------
-// Review cases
-// ---------------------------------------------------------------------
-app.post("/api/review-cases", (req, res) => {
-  const body = req.body || {};
-
-  if (!REVIEW_REASONS.includes(body.reason)) {
-    return res.status(400).json({
-      error: `reason must be one of: ${REVIEW_REASONS.join(", ")}`,
-    });
-  }
-
-  const identifierFields = [
-    "job_id",
-    "order_id",
-    "external_order_id",
-    "attachment_id",
-  ];
-  if (!identifierFields.some((field) => hasIdentifier(body[field]))) {
-    return res.status(400).json({
-      error: `at least one identifier is required: ${identifierFields.join(", ")}`,
-    });
-  }
-
-  const status = body.status ?? "open";
-  const priority = body.priority ?? "normal";
-  if (!REVIEW_STATUSES.includes(status)) {
-    return res.status(400).json({
-      error: `status must be one of: ${REVIEW_STATUSES.join(", ")}`,
-    });
-  }
-  if (!REVIEW_PRIORITIES.includes(priority)) {
-    return res.status(400).json({
-      error: `priority must be one of: ${REVIEW_PRIORITIES.join(", ")}`,
-    });
-  }
-  if (
-    body.confidence !== undefined &&
-    (typeof body.confidence !== "number" ||
-      !Number.isFinite(body.confidence) ||
-      body.confidence < 0 ||
-      body.confidence > 1)
-  ) {
-    return res.status(400).json({ error: "confidence must be a number from 0 to 1" });
-  }
-  if (body.context !== undefined && !isObject(body.context)) {
-    return res.status(400).json({ error: "context must be an object" });
-  }
-
-  const db = readDB();
-  db.review_cases ||= [];
-
-  if (hasIdentifier(body.job_id)) {
-    const linkedJob = db.jobs.find((job) => job.job_id === body.job_id);
-    if (!linkedJob) {
-      return res.status(404).json({ error: "job not found" });
-    }
-  }
-
-  const dedupeKey = body.dedupe_key || generatedDedupeKey(body);
-  const duplicate = db.review_cases.find(
-    (reviewCase) =>
-      reviewCase.dedupe_key === dedupeKey &&
-      UNRESOLVED_REVIEW_STATUSES.has(reviewCase.status)
-  );
-  if (duplicate) {
-    return res.status(200).json({ created: false, review_case: duplicate });
-  }
-
-  const now = new Date().toISOString();
-  const reviewCase = {
-    review_id: `REV_${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,
-    job_id: body.job_id ?? null,
-    order_id: body.order_id ?? null,
-    external_order_id: body.external_order_id ?? null,
-    attachment_id: body.attachment_id ?? null,
-    reason: body.reason,
-    status,
-    priority,
-    source_workflow: body.source_workflow ?? null,
-    source_node: body.source_node ?? null,
-    summary: body.summary ?? null,
-    error_message: body.error_message ?? null,
-    confidence: body.confidence ?? null,
-    context: body.context ?? {},
-    dedupe_key: dedupeKey,
-    assigned_to: null,
-    reviewer_notes: null,
-    resolution: null,
-    corrected_data: null,
-    customer_contacted_at: null,
-    created_at: now,
-    updated_at: now,
-    resolved_at: TERMINAL_REVIEW_STATUSES.has(status) ? now : null,
-  };
-
-  db.review_cases.push(reviewCase);
-  if (hasIdentifier(body.job_id)) {
-    const linkedJob = db.jobs.find((job) => job.job_id === body.job_id);
-    linkedJob.status = "human_review";
-    linkedJob.error = body.summary || body.error_message || null;
-    linkedJob.updated_at = now;
-  }
-  writeDB(db);
-
-  res.status(201).json({ created: true, review_case: reviewCase });
-});
-
-app.get("/api/review-cases", (req, res) => {
-  const filters = [
-    "status",
-    "reason",
-    "priority",
-    "job_id",
-    "order_id",
-    "external_order_id",
-    "attachment_id",
-  ];
-  const reviewCases = [...(readDB().review_cases || [])]
-    .reverse()
-    .filter((reviewCase) =>
-      filters.every(
-        (field) =>
-          req.query[field] === undefined || reviewCase[field] === req.query[field]
-      )
-    )
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-  res.json(reviewCases);
-});
-
-app.get("/api/review-cases/:review_id", (req, res) => {
-  const reviewCase = (readDB().review_cases || []).find(
-    (item) => item.review_id === req.params.review_id
-  );
-  if (!reviewCase) return res.status(404).json({ error: "review case not found" });
-  res.json(reviewCase);
-});
-
-app.patch("/api/review-cases/:review_id", (req, res) => {
-  const allowedFields = [
-    "status",
-    "priority",
-    "assigned_to",
-    "reviewer_notes",
-    "resolution",
-    "corrected_data",
-    "customer_contacted_at",
-  ];
-  const body = req.body || {};
-  const fields = allowedFields.filter((field) =>
-    Object.prototype.hasOwnProperty.call(body, field)
-  );
-
-  if (fields.length === 0) {
-    return res.status(400).json({ error: "at least one supported field is required" });
-  }
-  if (body.status !== undefined && !REVIEW_STATUSES.includes(body.status)) {
-    return res.status(400).json({
-      error: `status must be one of: ${REVIEW_STATUSES.join(", ")}`,
-    });
-  }
-  if (body.priority !== undefined && !REVIEW_PRIORITIES.includes(body.priority)) {
-    return res.status(400).json({
-      error: `priority must be one of: ${REVIEW_PRIORITIES.join(", ")}`,
-    });
-  }
-  if (body.corrected_data !== undefined && !isObject(body.corrected_data)) {
-    return res.status(400).json({ error: "corrected_data must be an object" });
-  }
-
-  const db = readDB();
-  const reviewCase = (db.review_cases || []).find(
-    (item) => item.review_id === req.params.review_id
-  );
-  if (!reviewCase) return res.status(404).json({ error: "review case not found" });
-
-  for (const field of fields) reviewCase[field] = body[field];
-  reviewCase.updated_at = new Date().toISOString();
-  if (fields.includes("status")) {
-    reviewCase.resolved_at = TERMINAL_REVIEW_STATUSES.has(reviewCase.status)
-      ? reviewCase.updated_at
-      : null;
-  }
-
-  writeDB(db);
-  res.json(reviewCase);
-});
-
-// ---------------------------------------------------------------------
-// GET /api/attachments/:attachment_id/download
-// Returns the original binary file for that attachment.
-// ---------------------------------------------------------------------
-app.get("/api/attachments/:attachment_id/download", (req, res) => {
-  const db = readDB();
-  const attachment = db.attachments.find(
-    (a) => a.attachment_id === req.params.attachment_id
-  );
-
-  if (!attachment) {
-    return res.status(404).json({ error: "attachment not found" });
-  }
-
-  const filePath = path.join(FILES_DIR, attachment.sample_file);
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: "file missing on disk" });
-  }
-
-  res.setHeader(
-    "Content-Type",
-    attachment.mime_type || "application/octet-stream"
-  );
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${attachment.original_filename}"`
-  );
-  res.sendFile(filePath);
-});
-
-// ---------------------------------------------------------------------
-// PATCH /api/file-jobs/:job_id
-// n8n reports back the result of processing a file (success or failure).
-// ---------------------------------------------------------------------
-app.patch("/api/file-jobs/:job_id", (req, res) => {
-  const db = readDB();
-  const job = db.jobs.find((j) => j.job_id === req.params.job_id);
-
-  if (!job) {
-    return res.status(404).json({ error: "job not found" });
-  }
-
-  const { status, final_filename, nas_path, checksum_sha256, error } =
-    req.body || {};
-
-  if (!status) {
-    return res.status(400).json({ error: "status is required" });
-  }
-
-  const allowedStatuses = ["completed", "human_review", "failed"];
-  if (!allowedStatuses.includes(status)) {
-    return res.status(400).json({
-      error: `status must be one of: ${allowedStatuses.join(", ")}`,
-    });
-  }
-
-  job.status = status;
-  job.final_filename = final_filename ?? job.final_filename;
-  job.nas_path = nas_path ?? job.nas_path;
-  job.checksum_sha256 = checksum_sha256 ?? job.checksum_sha256;
-  job.error = error ?? null;
-  job.updated_at = new Date().toISOString();
-
-  writeDB(db);
-  res.json({ ok: true, job });
-});
-
-// ---------------------------------------------------------------------
-// POST /api/simulate/fire-webhook
-// Body: { "webhook_url": "<n8n test webhook url>", "attachment_id": "ATT_123" }
-// Builds the "attachment ready" payload from db.json and POSTs it to the
-// URL you give it, so you can trigger your n8n workflow on demand.
-// ---------------------------------------------------------------------
-app.post("/api/simulate/fire-webhook", async (req, res) => {
-  const { webhook_url, attachment_id } = req.body || {};
-
-  if (!webhook_url || !attachment_id) {
+  if (!platform || !external_order_id) {
     return res
       .status(400)
-      .json({ error: "webhook_url and attachment_id are required" });
+      .json({ error: "platform and external_order_id are required" });
   }
-
-  const db = readDB();
-  const attachment = db.attachments.find(
-    (a) => a.attachment_id === attachment_id
-  );
-  if (!attachment) {
-    return res.status(404).json({ error: "attachment not found" });
-  }
-
-  const order = db.orders.find((o) => o.order_id === attachment.order_id);
-
-  const payload = {
-    job_id: attachment.job_id,
-    attachment_id: attachment.attachment_id,
-    order_id: attachment.order_id,
-    external_order_id: order ? order.external_order_id : null,
-    platform: order ? order.platform : null,
-    order_item_id: attachment.order_item_id || "",
-    product_name: attachment.product_name || "",
-    sku: attachment.sku || "",
-    variation: attachment.variation || "",
-    quantity: attachment.quantity ?? null,
-    original_filename: attachment.original_filename,
-    mime_type: attachment.mime_type,
-    file_size: attachment.file_size,
-    file_number: attachment.file_number,
-    total_files: attachment.total_files,
-    customer_notes: attachment.customer_notes || "",
-    download_url: `${req.protocol}://${req.get(
-      "host"
-    )}/api/attachments/${attachment.attachment_id}/download`,
-  };
 
   try {
-    const resp = await fetch(webhook_url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    res.json({ sent: true, webhook_status: resp.status, payload });
+    const existing = await db.select(
+      "orders",
+      `?platform=eq.${encodeURIComponent(platform)}&external_order_id=eq.${encodeURIComponent(external_order_id)}`
+    );
+    if (existing.length > 0) {
+      return res.json(await getOrderWithItems(existing[0].id));
+    }
+
+    const [order] = await db.insert("orders", [
+      {
+        platform,
+        external_order_id,
+        tracking_number: tracking_number || null,
+        customer_name: customer_name || null,
+        phone_number: phone_number || null,
+        email: email || null,
+        raw_payload: raw_payload || null,
+      },
+    ]);
+
+    await db.insert("order_status_events", [
+      { order_id: order.id, from_status: null, to_status: "new", reason: "order created", changed_by: "api" },
+    ]);
+
+    if (items && items.length) {
+      await db.insert(
+        "order_items",
+        items.map((item) => ({
+          order_id: order.id,
+          product_name: item.product_name || null,
+          sku: item.sku || null,
+          variation: item.variation || null,
+          quantity: item.quantity || null,
+        }))
+      );
+    }
+
+    res.status(201).json(await getOrderWithItems(order.id));
   } catch (err) {
-    res.status(502).json({
-      error: "failed to reach webhook_url",
-      details: err.message,
-      payload,
+    res.status(500).json({ error: "failed to create order", details: err.message });
+  }
+});
+
+app.get("/api/orders", async (req, res) => {
+  try {
+    const rows = await db.select("orders", "?select=*,order_items(*)&order=created_at.desc");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "failed to list orders", details: err.message });
+  }
+});
+
+app.get("/api/orders/:id", async (req, res) => {
+  try {
+    const order = await getOrderWithItems(req.params.id);
+    if (!order) return res.status(404).json({ error: "order not found" });
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: "failed to fetch order", details: err.message });
+  }
+});
+
+app.patch("/api/orders/:id", async (req, res) => {
+  const { status, review_reason, reason, changed_by } = req.body || {};
+  if (!status) return res.status(400).json({ error: "status is required" });
+
+  try {
+    const current = await db.select("orders", `?id=eq.${encodeURIComponent(req.params.id)}&select=status`);
+    if (current.length === 0) return res.status(404).json({ error: "order not found" });
+
+    await db.update("orders", `?id=eq.${encodeURIComponent(req.params.id)}`, {
+      status,
+      review_reason: review_reason || null,
     });
+    await db.insert("order_status_events", [
+      {
+        order_id: req.params.id,
+        from_status: current[0].status,
+        to_status: status,
+        reason: reason || null,
+        changed_by: changed_by || "api",
+      },
+    ]);
+
+    res.json(await getOrderWithItems(req.params.id));
+  } catch (err) {
+    res.status(500).json({ error: "failed to update order", details: err.message });
   }
 });
 
 // ---------------------------------------------------------------------
-// Debug / read-only helpers
+// Messages
 // ---------------------------------------------------------------------
-app.get("/api/orders", (req, res) => res.json(readDB().orders));
 
-app.get("/api/attachments", (req, res) => res.json(readDB().attachments));
+app.post("/api/messages", async (req, res) => {
+  const {
+    order_id,
+    platform,
+    conversation_id,
+    external_message_id,
+    sender,
+    receiver,
+    direction,
+    content,
+    message_time,
+    raw_payload,
+  } = req.body || {};
 
-app.get("/api/file-jobs", (req, res) => res.json(readDB().jobs));
+  if (!platform) return res.status(400).json({ error: "platform is required" });
 
-app.get("/api/file-jobs/:job_id", (req, res) => {
-  const job = readDB().jobs.find((j) => j.job_id === req.params.job_id);
-  if (!job) return res.status(404).json({ error: "job not found" });
-  res.json(job);
+  try {
+    const [message] = await db.insert("messages", [
+      {
+        order_id: order_id || null,
+        platform,
+        conversation_id: conversation_id || null,
+        external_message_id: external_message_id || null,
+        sender: sender || null,
+        receiver: receiver || null,
+        direction: direction || null,
+        content: content || null,
+        message_time: message_time || null,
+        raw_payload: raw_payload || null,
+      },
+    ]);
+    res.status(201).json(message);
+  } catch (err) {
+    res.status(500).json({ error: "failed to create message", details: err.message });
+  }
 });
 
-if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`order-file-api-mock listening on http://localhost:${PORT}`);
-  });
-}
+app.get("/api/messages", async (req, res) => {
+  const { order_id, platform, conversation_id } = req.query;
+  const filters = [];
+  if (order_id) filters.push(`order_id=eq.${encodeURIComponent(order_id)}`);
+  if (platform) filters.push(`platform=eq.${encodeURIComponent(platform)}`);
+  if (conversation_id) filters.push(`conversation_id=eq.${encodeURIComponent(conversation_id)}`);
+  filters.push("order=message_time.asc.nullslast,created_at.asc");
 
-module.exports = app;
+  try {
+    const rows = await db.select("messages", `?${filters.join("&")}`);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "failed to list messages", details: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------
+// POST /api/webhooks/whatsapp
+// Accepts the WhatsApp Cloud API webhook "value" shape (see
+// study/07-whatsapp-webhook-format.md) - text, image, or document messages.
+// Creates a messages row per message, plus a files row for image/document.
+// ---------------------------------------------------------------------
+app.post("/api/webhooks/whatsapp", async (req, res) => {
+  const events = Array.isArray(req.body) ? req.body : [req.body];
+  const created = [];
+
+  try {
+    for (const event of events) {
+      for (const msg of event.messages || []) {
+        const messageTime = msg.timestamp
+          ? new Date(Number(msg.timestamp) * 1000).toISOString()
+          : null;
+        const content = msg.type === "text" ? msg.text?.body ?? null : null;
+
+        const [message] = await db.insert("messages", [
+          {
+            platform: "whatsapp",
+            conversation_id: msg.from,
+            external_message_id: msg.id,
+            sender: msg.from,
+            direction: "inbound",
+            content,
+            message_time: messageTime,
+            raw_payload: msg,
+          },
+        ]);
+
+        let file = null;
+        if (msg.type === "image" || msg.type === "document") {
+          const media = msg[msg.type];
+          const [fileRow] = await db.insert("files", [
+            { message_id: message.id, original_filename: media.filename || null, mime_type: media.mime_type || null },
+          ]);
+          file = fileRow;
+        }
+
+        created.push({ message, file });
+      }
+    }
+    res.status(201).json({ created });
+  } catch (err) {
+    res.status(500).json({ error: "failed to ingest whatsapp webhook", details: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Files / file jobs (existing mock contract, now backed by Postgres)
+// ---------------------------------------------------------------------
+
+app.get("/api/attachments", async (req, res) => {
+  try {
+    const rows = await db.select("files", "?select=*&order=created_at.desc");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "failed to list files", details: err.message });
+  }
+});
+
+app.get("/api/attachments/:attachment_id/download", async (req, res) => {
+  try {
+    const rows = await db.select("files", `?id=eq.${encodeURIComponent(req.params.attachment_id)}`);
+    if (rows.length === 0) return res.status(404).json({ error: "attachment not found" });
+    const file = rows[0];
+
+    if (!file.nas_path || !fs.existsSync(file.nas_path)) {
+      return res.status(404).json({ error: "file not yet available on NAS" });
+    }
+
+    res.setHeader("Content-Type", file.mime_type || "application/octet-stream");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.original_filename || path.basename(file.nas_path)}"`
+    );
+    res.sendFile(file.nas_path);
+  } catch (err) {
+    res.status(500).json({ error: "failed to fetch attachment", details: err.message });
+  }
+});
+
+app.get("/api/file-jobs", async (req, res) => {
+  try {
+    const rows = await db.select("file_jobs", "?select=*&order=created_at.desc");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "failed to list file jobs", details: err.message });
+  }
+});
+
+app.get("/api/file-jobs/:job_id", async (req, res) => {
+  try {
+    const rows = await db.select("file_jobs", `?id=eq.${encodeURIComponent(req.params.job_id)}`);
+    if (rows.length === 0) return res.status(404).json({ error: "job not found" });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: "failed to fetch file job", details: err.message });
+  }
+});
+
+app.patch("/api/file-jobs/:job_id", async (req, res) => {
+  const { status, final_filename, nas_path, checksum_sha256, error } = req.body || {};
+
+  if (!status) return res.status(400).json({ error: "status is required" });
+  const allowedStatuses = ["completed", "human_review", "failed"];
+  if (!allowedStatuses.includes(status)) {
+    return res.status(400).json({ error: `status must be one of: ${allowedStatuses.join(", ")}` });
+  }
+
+  try {
+    const jobs = await db.select("file_jobs", `?id=eq.${encodeURIComponent(req.params.job_id)}`);
+    if (jobs.length === 0) return res.status(404).json({ error: "job not found" });
+
+    const patch = { status, error: error || null, updated_at: new Date().toISOString() };
+    if (final_filename) patch.final_filename = final_filename;
+    if (checksum_sha256) patch.checksum_sha256 = checksum_sha256;
+
+    const [job] = await db.update("file_jobs", `?id=eq.${encodeURIComponent(req.params.job_id)}`, patch);
+
+    if (nas_path) {
+      await db.update("files", `?id=eq.${encodeURIComponent(job.file_id)}`, { nas_path });
+    }
+
+    res.json({ ok: true, job });
+  } catch (err) {
+    res.status(500).json({ error: "failed to update file job", details: err.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`order-file-api listening on http://localhost:${PORT} (backed by Supabase via PostgREST)`);
+});

@@ -1,7 +1,7 @@
 {
   "name": "order-file-api-mock",
   "version": "1.0.0",
-  "description": "Minimal mock API for the AI Customer Service Automation Workflow (file-download, status-update, webhook-fire). JSON-file storage, no SQL.",
+  "description": "Order/message/file API for the AI Customer Service Automation Workflow, backed by Postgres on Supabase via PostgREST (see db.js).",
   "main": "server.js",
   "type": "commonjs",
   "engines": {
@@ -14,5 +14,8 @@
   },
   "dependencies": {
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "^1.8.0"
   }
 }
