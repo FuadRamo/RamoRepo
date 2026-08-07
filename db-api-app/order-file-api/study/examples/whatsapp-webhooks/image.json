@@ -1,0 +1,35 @@
+[
+  {
+    "messaging_product": "whatsapp",
+    "metadata": {
+      "display_phone_number": "15552039396",
+      "phone_number_id": "1289477804244620"
+    },
+    "contacts": [
+      {
+        "profile": {
+          "name": "Mohammad Fuad Awwad",
+          "username": "Moh_Fuad_"
+        },
+        "wa_id": "601166575171",
+        "user_id": "MY.1036442232361953"
+      }
+    ],
+    "messages": [
+      {
+        "from": "601166575171",
+        "from_user_id": "MY.1036442232361953",
+        "id": "wamid.HBgMNjAxMTY2NTc1MTcxFQIAEhggQUNGNDQ3NEM1MDZGRkI4NzAwQkQwN0ZCMkE2RDZCQjgA",
+        "timestamp": "1785926933",
+        "type": "image",
+        "image": {
+          "mime_type": "image/jpeg",
+          "sha256": "2nEYhejMtl0c0gK1pKALOD2JyPf7OwzAza/zZq0Gdy8=",
+          "id": "1026734613460439",
+          "url": "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1026734613460439&source=webhook&ext=1785927234&hash=ATwLweWoghooLYVPoyJEx1bFi7Tq9gDDO2r4oVLuvN2pdQ"
+        }
+      }
+    ],
+    "field": "messages"
+  }
+]

@@ -1,2 +1,5 @@
 # Real customer data — never enters git history. Reference-only, local disk.
 data/raw/
+
+# Git/deployment credentials — never commit.
+.env.git

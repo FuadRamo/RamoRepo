@@ -1,204 +1,345 @@
 /**
- * order-file-api-mock
+ * order-file-api
  * -------------------------------------------------------------------------
- * A minimal mock of "Mohammad's backend" for the AI Customer Service
- * Automation Workflow. It lets n8n be built and tested against real
- * request/response shapes before the production API exists.
+ * Backed by the live Supabase Postgres schema (see
+ * supabase/migrations/20260806140000_init_schema.sql) via db.js — see that
+ * file for why the DB access pattern is temporary and what to replace it
+ * with (service_role key or a direct connection string, neither provided
+ * yet).
  *
- * Storage: a single db.json file. No SQL, no ORM.
- *
- * Endpoints:
- *   GET   /api/attachments/:attachment_id/download   -> binary file
- *   PATCH /api/file-jobs/:job_id                      -> accept status update
- *   POST  /api/simulate/fire-webhook                  -> send the
- *         "attachment ready" webhook payload to a URL you provide (e.g. an
- *         n8n Webhook node's test URL), so you can trigger your workflow
- *         without waiting on the real backend.
- *
- *   Debug/read-only helpers:
- *   GET   /api/orders
- *   GET   /api/attachments
- *   GET   /api/file-jobs
- *   GET   /api/file-jobs/:job_id
- *
- * No auth is enforced right now (per "for now it's unnecessary"). See
- * README.md "Adding an API key later" for how to switch it on.
+ * No auth is enforced right now (explicit decision, internal network only
+ * — see study/02-supabase-schema-design.md and study/05-secrets-handling.md).
+ * See README.md "Adding an API key later" for how to switch it on.
  */
 
 const express = require("express");
-const fs = require("fs");
 const path = require("path");
+const fs = require("fs");
+const db = require("./db");
 
 const app = express();
 app.use(express.json());
 
-const DB_PATH = path.join(__dirname, "db.json");
-const FILES_DIR = path.join(__dirname, "sample-files");
 const PORT = process.env.PORT || 3000;
 
-// Uncomment and set to require an API key on every request:
-// const API_KEY = process.env.API_KEY;
-// app.use((req, res, next) => {
-//   if (!API_KEY) return next();
-//   if (req.get("x-api-key") !== API_KEY) {
-//     return res.status(401).json({ error: "unauthorized" });
-//   }
-//   next();
-// });
-
-function readDB() {
-  return JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-}
-
-function writeDB(data) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-}
-
 // ---------------------------------------------------------------------
-// GET /api/attachments/:attachment_id/download
-// Returns the original binary file for that attachment.
+// Orders
 // ---------------------------------------------------------------------
-app.get("/api/attachments/:attachment_id/download", (req, res) => {
-  const db = readDB();
-  const attachment = db.attachments.find(
-    (a) => a.attachment_id === req.params.attachment_id
-  );
 
-  if (!attachment) {
-    return res.status(404).json({ error: "attachment not found" });
-  }
+app.post("/api/orders", async (req, res) => {
+  const {
+    platform,
+    external_order_id,
+    tracking_number,
+    customer_name,
+    phone_number,
+    email,
+    items,
+    raw_payload,
+  } = req.body || {};
 
-  const filePath = path.join(FILES_DIR, attachment.sample_file);
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: "file missing on disk" });
-  }
-
-  res.setHeader(
-    "Content-Type",
-    attachment.mime_type || "application/octet-stream"
-  );
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${attachment.original_filename}"`
-  );
-  res.sendFile(filePath);
-});
-
-// ---------------------------------------------------------------------
-// PATCH /api/file-jobs/:job_id
-// n8n reports back the result of processing a file (success or failure).
-// ---------------------------------------------------------------------
-app.patch("/api/file-jobs/:job_id", (req, res) => {
-  const db = readDB();
-  const job = db.jobs.find((j) => j.job_id === req.params.job_id);
-
-  if (!job) {
-    return res.status(404).json({ error: "job not found" });
-  }
-
-  const { status, final_filename, nas_path, checksum_sha256, error } =
-    req.body || {};
-
-  if (!status) {
-    return res.status(400).json({ error: "status is required" });
-  }
-
-  const allowedStatuses = ["completed", "human_review", "failed"];
-  if (!allowedStatuses.includes(status)) {
-    return res.status(400).json({
-      error: `status must be one of: ${allowedStatuses.join(", ")}`,
-    });
-  }
-
-  job.status = status;
-  job.final_filename = final_filename ?? job.final_filename;
-  job.nas_path = nas_path ?? job.nas_path;
-  job.checksum_sha256 = checksum_sha256 ?? job.checksum_sha256;
-  job.error = error ?? null;
-  job.updated_at = new Date().toISOString();
-
-  writeDB(db);
-  res.json({ ok: true, job });
-});
-
-// ---------------------------------------------------------------------
-// POST /api/simulate/fire-webhook
-// Body: { "webhook_url": "<n8n test webhook url>", "attachment_id": "ATT_123" }
-// Builds the "attachment ready" payload from db.json and POSTs it to the
-// URL you give it, so you can trigger your n8n workflow on demand.
-// ---------------------------------------------------------------------
-app.post("/api/simulate/fire-webhook", async (req, res) => {
-  const { webhook_url, attachment_id } = req.body || {};
-
-  if (!webhook_url || !attachment_id) {
+  if (!platform || !external_order_id) {
     return res
       .status(400)
-      .json({ error: "webhook_url and attachment_id are required" });
+      .json({ error: "platform and external_order_id are required" });
   }
-
-  const db = readDB();
-  const attachment = db.attachments.find(
-    (a) => a.attachment_id === attachment_id
-  );
-  if (!attachment) {
-    return res.status(404).json({ error: "attachment not found" });
-  }
-
-  const order = db.orders.find((o) => o.order_id === attachment.order_id);
-
-  const payload = {
-    job_id: attachment.job_id,
-    attachment_id: attachment.attachment_id,
-    order_id: attachment.order_id,
-    external_order_id: order ? order.external_order_id : null,
-    platform: order ? order.platform : null,
-    order_item_id: attachment.order_item_id || "",
-    product_name: attachment.product_name || "",
-    sku: attachment.sku || "",
-    variation: attachment.variation || "",
-    quantity: attachment.quantity ?? null,
-    original_filename: attachment.original_filename,
-    mime_type: attachment.mime_type,
-    file_size: attachment.file_size,
-    file_number: attachment.file_number,
-    total_files: attachment.total_files,
-    customer_notes: attachment.customer_notes || "",
-    download_url: `${req.protocol}://${req.get(
-      "host"
-    )}/api/attachments/${attachment.attachment_id}/download`,
-  };
 
   try {
-    const resp = await fetch(webhook_url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    res.json({ sent: true, webhook_status: resp.status, payload });
+    const existing = await db.query(
+      `select id from orders where platform = $1 and external_order_id = $2`,
+      [platform, external_order_id]
+    );
+    if (existing.length > 0) {
+      const order = await getOrderWithItems(existing[0].id);
+      return res.json(order);
+    }
+
+    const [{ id: orderId }] = await db.query(
+      `insert into orders (platform, external_order_id, tracking_number, customer_name, phone_number, email, raw_payload)
+       values ($1, $2, $3, $4, $5, $6, $7)
+       returning id`,
+      [
+        platform,
+        external_order_id,
+        tracking_number || null,
+        customer_name || null,
+        phone_number || null,
+        email || null,
+        raw_payload ? JSON.stringify(raw_payload) : null,
+      ]
+    );
+
+    await db.query(
+      `insert into order_status_events (order_id, from_status, to_status, reason, changed_by)
+       values ($1, null, 'new', 'order created', 'api')`,
+      [orderId]
+    );
+
+    for (const item of items || []) {
+      await db.query(
+        `insert into order_items (order_id, product_name, sku, variation, quantity)
+         values ($1, $2, $3, $4, $5)`,
+        [orderId, item.product_name || null, item.sku || null, item.variation || null, item.quantity || null]
+      );
+    }
+
+    const order = await getOrderWithItems(orderId);
+    res.status(201).json(order);
   } catch (err) {
-    res.status(502).json({
-      error: "failed to reach webhook_url",
-      details: err.message,
-      payload,
-    });
+    res.status(500).json({ error: "failed to create order", details: err.message });
+  }
+});
+
+app.get("/api/orders", async (req, res) => {
+  try {
+    const rows = await db.query(`select * from orders order by created_at desc`, [], { readOnly: true });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "failed to list orders", details: err.message });
+  }
+});
+
+app.get("/api/orders/:id", async (req, res) => {
+  try {
+    const order = await getOrderWithItems(req.params.id);
+    if (!order) return res.status(404).json({ error: "order not found" });
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: "failed to fetch order", details: err.message });
+  }
+});
+
+app.patch("/api/orders/:id", async (req, res) => {
+  const { status, review_reason, reason, changed_by } = req.body || {};
+  if (!status) return res.status(400).json({ error: "status is required" });
+
+  try {
+    const current = await db.query(`select status from orders where id = $1`, [req.params.id]);
+    if (current.length === 0) return res.status(404).json({ error: "order not found" });
+
+    await db.query(
+      `update orders set status = $1, review_reason = $2 where id = $3`,
+      [status, review_reason || null, req.params.id]
+    );
+    await db.query(
+      `insert into order_status_events (order_id, from_status, to_status, reason, changed_by)
+       values ($1, $2, $3, $4, $5)`,
+      [req.params.id, current[0].status, status, reason || null, changed_by || "api"]
+    );
+
+    const order = await getOrderWithItems(req.params.id);
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: "failed to update order", details: err.message });
+  }
+});
+
+async function getOrderWithItems(orderId) {
+  const orders = await db.query(`select * from orders where id = $1`, [orderId]);
+  if (orders.length === 0) return null;
+  const items = await db.query(`select * from order_items where order_id = $1`, [orderId]);
+  return { ...orders[0], items };
+}
+
+// ---------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------
+
+app.post("/api/messages", async (req, res) => {
+  const {
+    order_id,
+    platform,
+    conversation_id,
+    external_message_id,
+    sender,
+    receiver,
+    direction,
+    content,
+    message_time,
+    raw_payload,
+  } = req.body || {};
+
+  if (!platform) return res.status(400).json({ error: "platform is required" });
+
+  try {
+    const [message] = await db.query(
+      `insert into messages (order_id, platform, conversation_id, external_message_id, sender, receiver, direction, content, message_time, raw_payload)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       returning *`,
+      [
+        order_id || null,
+        platform,
+        conversation_id || null,
+        external_message_id || null,
+        sender || null,
+        receiver || null,
+        direction || null,
+        content || null,
+        message_time || null,
+        raw_payload ? JSON.stringify(raw_payload) : null,
+      ]
+    );
+    res.status(201).json(message);
+  } catch (err) {
+    res.status(500).json({ error: "failed to create message", details: err.message });
+  }
+});
+
+app.get("/api/messages", async (req, res) => {
+  const { order_id, platform, conversation_id } = req.query;
+  const clauses = [];
+  const params = [];
+
+  if (order_id) { params.push(order_id); clauses.push(`order_id = $${params.length}`); }
+  if (platform) { params.push(platform); clauses.push(`platform = $${params.length}`); }
+  if (conversation_id) { params.push(conversation_id); clauses.push(`conversation_id = $${params.length}`); }
+
+  const where = clauses.length ? `where ${clauses.join(" and ")}` : "";
+
+  try {
+    const rows = await db.query(
+      `select * from messages ${where} order by message_time nulls last, created_at`,
+      params,
+      { readOnly: true }
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "failed to list messages", details: err.message });
   }
 });
 
 // ---------------------------------------------------------------------
-// Debug / read-only helpers
+// POST /api/webhooks/whatsapp
+// Accepts the WhatsApp Cloud API webhook "value" shape (see
+// study/07-whatsapp-webhook-format.md) - text, image, or document messages.
+// Creates a messages row per message, plus a files row for image/document.
 // ---------------------------------------------------------------------
-app.get("/api/orders", (req, res) => res.json(readDB().orders));
+app.post("/api/webhooks/whatsapp", async (req, res) => {
+  const events = Array.isArray(req.body) ? req.body : [req.body];
+  const created = [];
 
-app.get("/api/attachments", (req, res) => res.json(readDB().attachments));
+  try {
+    for (const event of events) {
+      for (const msg of event.messages || []) {
+        const messageTime = msg.timestamp
+          ? new Date(Number(msg.timestamp) * 1000).toISOString()
+          : null;
 
-app.get("/api/file-jobs", (req, res) => res.json(readDB().jobs));
+        const content = msg.type === "text" ? msg.text?.body ?? null : null;
 
-app.get("/api/file-jobs/:job_id", (req, res) => {
-  const job = readDB().jobs.find((j) => j.job_id === req.params.job_id);
-  if (!job) return res.status(404).json({ error: "job not found" });
-  res.json(job);
+        const [message] = await db.query(
+          `insert into messages (platform, conversation_id, external_message_id, sender, direction, content, message_time, raw_payload)
+           values ('whatsapp', $1, $2, $3, 'inbound', $4, $5, $6)
+           returning *`,
+          [msg.from, msg.id, msg.from, content, messageTime, JSON.stringify(msg)]
+        );
+
+        let file = null;
+        if (msg.type === "image" || msg.type === "document") {
+          const media = msg[msg.type];
+          const [fileRow] = await db.query(
+            `insert into files (message_id, original_filename, mime_type)
+             values ($1, $2, $3)
+             returning *`,
+            [message.id, media.filename || null, media.mime_type || null]
+          );
+          file = fileRow;
+        }
+
+        created.push({ message, file });
+      }
+    }
+    res.status(201).json({ created });
+  } catch (err) {
+    res.status(500).json({ error: "failed to ingest whatsapp webhook", details: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Files / file jobs (existing mock contract, now backed by Postgres)
+// ---------------------------------------------------------------------
+
+app.get("/api/attachments", async (req, res) => {
+  try {
+    const rows = await db.query(`select * from files order by created_at desc`, [], { readOnly: true });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "failed to list files", details: err.message });
+  }
+});
+
+app.get("/api/attachments/:attachment_id/download", async (req, res) => {
+  try {
+    const rows = await db.query(`select * from files where id = $1`, [req.params.attachment_id]);
+    if (rows.length === 0) return res.status(404).json({ error: "attachment not found" });
+    const file = rows[0];
+
+    if (!file.nas_path || !fs.existsSync(file.nas_path)) {
+      return res.status(404).json({ error: "file not yet available on NAS" });
+    }
+
+    res.setHeader("Content-Type", file.mime_type || "application/octet-stream");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.original_filename || path.basename(file.nas_path)}"`
+    );
+    res.sendFile(file.nas_path);
+  } catch (err) {
+    res.status(500).json({ error: "failed to fetch attachment", details: err.message });
+  }
+});
+
+app.get("/api/file-jobs", async (req, res) => {
+  try {
+    const rows = await db.query(`select * from file_jobs order by created_at desc`, [], { readOnly: true });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "failed to list file jobs", details: err.message });
+  }
+});
+
+app.get("/api/file-jobs/:job_id", async (req, res) => {
+  try {
+    const rows = await db.query(`select * from file_jobs where id = $1`, [req.params.job_id]);
+    if (rows.length === 0) return res.status(404).json({ error: "job not found" });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: "failed to fetch file job", details: err.message });
+  }
+});
+
+app.patch("/api/file-jobs/:job_id", async (req, res) => {
+  const { status, final_filename, nas_path, checksum_sha256, error } = req.body || {};
+
+  if (!status) return res.status(400).json({ error: "status is required" });
+  const allowedStatuses = ["completed", "human_review", "failed"];
+  if (!allowedStatuses.includes(status)) {
+    return res.status(400).json({ error: `status must be one of: ${allowedStatuses.join(", ")}` });
+  }
+
+  try {
+    const jobs = await db.query(`select * from file_jobs where id = $1`, [req.params.job_id]);
+    if (jobs.length === 0) return res.status(404).json({ error: "job not found" });
+
+    const [job] = await db.query(
+      `update file_jobs
+       set status = $1, final_filename = coalesce($2, final_filename),
+           checksum_sha256 = coalesce($3, checksum_sha256), error = $4, updated_at = now()
+       where id = $5
+       returning *`,
+      [status, final_filename || null, checksum_sha256 || null, error || null, req.params.job_id]
+    );
+
+    if (nas_path) {
+      await db.query(`update files set nas_path = $1 where id = $2`, [nas_path, job.file_id]);
+    }
+
+    res.json({ ok: true, job });
+  } catch (err) {
+    res.status(500).json({ error: "failed to update file job", details: err.message });
+  }
 });
 
 app.listen(PORT, () => {
-  console.log(`order-file-api-mock listening on http://localhost:${PORT}`);
+  console.log(`order-file-api listening on http://localhost:${PORT} (backed by Supabase)`);
 });
