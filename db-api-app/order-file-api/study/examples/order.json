@@ -1,0 +1,30 @@
+{
+  "id": "b6f1e2a4-3c9d-4e7a-9f1a-1a2b3c4d5e6f",
+  "platform": "shopee",
+  "external_order_id": "260727QURVFYCT",
+  "tracking_number": null,
+  "customer_name": "Ali Bin Ahmad",
+  "phone_number": "+60123456789",
+  "email": "ali@example.com",
+  "status": "new",
+  "review_reason": null,
+  "raw_payload": { "note": "verbatim Shopee webhook payload goes here" },
+  "created_at": "2026-08-06T00:00:00.000Z",
+  "updated_at": "2026-08-06T00:00:00.000Z",
+  "items": [
+    {
+      "id": "1a2b3c4d-0001-0000-0000-000000000001",
+      "product_name": "Sticker A5",
+      "sku": "STICKER-A5",
+      "variation": "Glossy, 5cm",
+      "quantity": 100
+    },
+    {
+      "id": "1a2b3c4d-0002-0000-0000-000000000002",
+      "product_name": "Business Card",
+      "sku": "BCARD-STD",
+      "variation": "Matte",
+      "quantity": 500
+    }
+  ]
+}

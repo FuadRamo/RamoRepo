@@ -1,0 +1,79 @@
+flowchart TD
+    subgraph Platforms["Platform sources"]
+        P1[Shopee / Lazada / Website order]
+        P2[WhatsApp / Email / Shopee Chat / Lazada Chat / Website]
+    end
+
+    subgraph API["order-file-api : port 3000 (this project)"]
+        C1["POST /api/orders\n(Create)"]
+        C2["POST /api/messages\n(Create)"]
+        C3["POST /api/support-cases\n(Create)"]
+        C4["POST /api/invoices\n(Create)"]
+        R1["GET /api/orders\nGET /api/messages?order_id=&conversation_id=\nGET /api/support-cases?status=\n(Read)"]
+        U1["PATCH /api/orders/:id\n(Update status / review_reason)\n-> writes order_status_events"]
+        U2["PATCH /api/file-jobs/:id\n(Update processing status)"]
+        U3["PATCH /api/support-cases/:id\n(Update status/notes)"]
+        U4["PATCH /api/invoices/:id\n(Update payment status)"]
+        U5["PATCH /api/print-jobs/:order_id\n(Mark job-sheet / label printed)"]
+        D1["(no hard deletes - status-based\nsoft close only, see planning doc)"]
+    end
+
+    subgraph DB["Supabase Postgres"]
+        T1[(orders + order_items)]
+        T2[(messages)]
+        T3[(files + file_jobs)]
+        T4[(support_cases)]
+        T5[(invoices)]
+        T6[(order_status_events)]
+        T7[(print_jobs)]
+    end
+
+    subgraph Consumers["Other modules (read + write via API only)"]
+        N1[Automation Engine / n8n]
+        N2[AI Search Agent]
+        N3[AI File Agent]
+        N4[Human Review UI]
+        N5[CS Staff - daily workflow]
+        N6[Finance / Invoicing]
+        N7[Production / Print]
+    end
+
+    subgraph Storage["Local Network Storage (NAS)"]
+        S1[(Renamed, organized files\nby order folder)]
+    end
+
+    P1 -->|"new order webhook"| C1 --> T1
+    C1 -.->|"insert triggers"| T6
+    P2 -->|"synced message"| C2 --> T2
+
+    N1 -->|"poll / read"| R1
+    R1 --> T1
+    R1 --> T2
+    R1 --> T4
+
+    N2 -->|"match order <-> conversation"| U1 --> T1
+    U1 -.->|"every status change logged"| T6
+    N2 -->|"link message.order_id"| C2
+
+    N3 -->|"download attachment,\nsave to NAS"| S1
+    N3 -->|"report result"| U2 --> T3
+    T3 -->|"nas_path stored,\nnever the file bytes"| S1
+
+    N1 -->|"no match after retry limit"| U1
+    N4 -->|"review + correct"| U1
+    U1 -->|"status = human_review\n+ review_reason"| T1
+
+    N5 -->|"open case: complaint/return/\ncancel/after-sales/etc"| C3 --> T4
+    N5 -->|"resolve / close case"| U3 --> T4
+    T4 -.->|"return/cancel resolution"| U1
+
+    N6 -->|"create invoice"| C4 --> T5
+    N6 -->|"verify + mark paid"| U4 --> T5
+    U4 -.->|"payment confirmed\nunblocks production"| U1
+
+    N7 -->|"print job sheet + shipping label"| U5 --> T7
+
+    classDef api fill:#1e3a5f,stroke:#5b9bd5,color:#fff
+    classDef db fill:#2d1e4a,stroke:#9b6dd6,color:#fff
+    class C1,C2,C3,C4,R1,U1,U2,U3,U4,U5,D1 api
+    class T1,T2,T3,T4,T5,T6,T7 db
