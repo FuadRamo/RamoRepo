@@ -107,10 +107,75 @@ function hasIdentifier(value) {
 
 function generatedDedupeKey(body) {
   const identifier =
-    [body.job_id, body.attachment_id, body.order_id, body.external_order_id].find(
+    [
+      body.job_id,
+      body.attachment_id,
+      body.order_id,
+      body.external_order_id,
+      body.intake_id,
+    ].find(
       hasIdentifier
     ) || "unknown";
   return `${identifier}:${body.reason}:${body.source_node || "unknown_source"}`;
+}
+
+function normalizeOrderIdentifier(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .trim()
+    .toUpperCase()
+    .replace(/^ORDER\s*(?:ID|NUMBER|NO)?\s*[:#-]?\s*/i, "")
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function addReviewCaseRecord(db, body) {
+  db.review_cases ||= [];
+  const status = body.status ?? "open";
+  const priority = body.priority ?? "normal";
+  const dedupeKey = body.dedupe_key || generatedDedupeKey(body);
+  const duplicate = db.review_cases.find(
+    (reviewCase) =>
+      reviewCase.dedupe_key === dedupeKey &&
+      UNRESOLVED_REVIEW_STATUSES.has(reviewCase.status)
+  );
+  if (duplicate) return { created: false, review_case: duplicate };
+
+  const now = new Date().toISOString();
+  const reviewCase = {
+    review_id: `REV_${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,
+    intake_id: body.intake_id ?? null,
+    job_id: body.job_id ?? null,
+    order_id: body.order_id ?? null,
+    external_order_id: body.external_order_id ?? null,
+    attachment_id: body.attachment_id ?? null,
+    reason: body.reason,
+    status,
+    priority,
+    source_workflow: body.source_workflow ?? null,
+    source_node: body.source_node ?? null,
+    summary: body.summary ?? null,
+    error_message: body.error_message ?? null,
+    confidence: body.confidence ?? null,
+    context: body.context ?? {},
+    dedupe_key: dedupeKey,
+    assigned_to: null,
+    reviewer_notes: null,
+    resolution: null,
+    corrected_data: null,
+    customer_contacted_at: null,
+    created_at: now,
+    updated_at: now,
+    resolved_at: TERMINAL_REVIEW_STATUSES.has(status) ? now : null,
+  };
+
+  db.review_cases.push(reviewCase);
+  if (hasIdentifier(body.job_id)) {
+    const linkedJob = db.jobs.find((job) => job.job_id === body.job_id);
+    linkedJob.status = "human_review";
+    linkedJob.error = body.summary || body.error_message || null;
+    linkedJob.updated_at = now;
+  }
+  return { created: true, review_case: reviewCase };
 }
 
 // ---------------------------------------------------------------------
@@ -126,6 +191,7 @@ app.post("/api/review-cases", (req, res) => {
   }
 
   const identifierFields = [
+    "intake_id",
     "job_id",
     "order_id",
     "external_order_id",
@@ -172,57 +238,14 @@ app.post("/api/review-cases", (req, res) => {
     }
   }
 
-  const dedupeKey = body.dedupe_key || generatedDedupeKey(body);
-  const duplicate = db.review_cases.find(
-    (reviewCase) =>
-      reviewCase.dedupe_key === dedupeKey &&
-      UNRESOLVED_REVIEW_STATUSES.has(reviewCase.status)
-  );
-  if (duplicate) {
-    return res.status(200).json({ created: false, review_case: duplicate });
-  }
-
-  const now = new Date().toISOString();
-  const reviewCase = {
-    review_id: `REV_${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,
-    job_id: body.job_id ?? null,
-    order_id: body.order_id ?? null,
-    external_order_id: body.external_order_id ?? null,
-    attachment_id: body.attachment_id ?? null,
-    reason: body.reason,
-    status,
-    priority,
-    source_workflow: body.source_workflow ?? null,
-    source_node: body.source_node ?? null,
-    summary: body.summary ?? null,
-    error_message: body.error_message ?? null,
-    confidence: body.confidence ?? null,
-    context: body.context ?? {},
-    dedupe_key: dedupeKey,
-    assigned_to: null,
-    reviewer_notes: null,
-    resolution: null,
-    corrected_data: null,
-    customer_contacted_at: null,
-    created_at: now,
-    updated_at: now,
-    resolved_at: TERMINAL_REVIEW_STATUSES.has(status) ? now : null,
-  };
-
-  db.review_cases.push(reviewCase);
-  if (hasIdentifier(body.job_id)) {
-    const linkedJob = db.jobs.find((job) => job.job_id === body.job_id);
-    linkedJob.status = "human_review";
-    linkedJob.error = body.summary || body.error_message || null;
-    linkedJob.updated_at = now;
-  }
+  const result = addReviewCaseRecord(db, body);
   writeDB(db);
-
-  res.status(201).json({ created: true, review_case: reviewCase });
+  res.status(result.created ? 201 : 200).json(result);
 });
 
 app.get("/api/review-cases", (req, res) => {
   const filters = [
+    "intake_id",
     "status",
     "reason",
     "priority",
@@ -300,6 +323,257 @@ app.patch("/api/review-cases/:review_id", (req, res) => {
 
   writeDB(db);
   res.json(reviewCase);
+});
+
+// ---------------------------------------------------------------------
+// Gmail order intake
+// ---------------------------------------------------------------------
+app.post("/api/email-intakes", (req, res) => {
+  const body = req.body || {};
+  const allowedIntents = ["order_submission", "inquiry", "other"];
+  const intent = body.intent ?? "order_submission";
+  if (!hasIdentifier(body.gmail_message_id)) {
+    return res.status(400).json({ error: "gmail_message_id is required" });
+  }
+  if (!allowedIntents.includes(intent)) {
+    return res
+      .status(400)
+      .json({ error: `intent must be one of: ${allowedIntents.join(", ")}` });
+  }
+  if (
+    body.extraction_confidence !== undefined &&
+    (typeof body.extraction_confidence !== "number" ||
+      !Number.isFinite(body.extraction_confidence) ||
+      body.extraction_confidence < 0 ||
+      body.extraction_confidence > 1)
+  ) {
+    return res
+      .status(400)
+      .json({ error: "extraction_confidence must be a number from 0 to 1" });
+  }
+  if (body.attachments !== undefined && !Array.isArray(body.attachments)) {
+    return res.status(400).json({ error: "attachments must be an array" });
+  }
+
+  const db = readDB();
+  db.email_intakes ||= [];
+  const duplicate = db.email_intakes.find(
+    (item) => item.gmail_message_id === String(body.gmail_message_id)
+  );
+  if (duplicate) {
+    return res.status(200).json({ created: false, intake: duplicate });
+  }
+
+  const extractedOrderId = hasIdentifier(body.extracted_order_id)
+    ? String(body.extracted_order_id).trim()
+    : null;
+  const normalizedOrderId = normalizeOrderIdentifier(extractedOrderId);
+  const order = normalizedOrderId
+    ? (db.orders || []).find((candidate) =>
+        [candidate.order_id, candidate.external_order_id].some(
+          (value) => normalizeOrderIdentifier(value) === normalizedOrderId
+        )
+      )
+    : null;
+  const attachments = (body.attachments || []).map((file, index) => ({
+    attachment_key: hasIdentifier(file?.attachment_key)
+      ? String(file.attachment_key)
+      : `attachment_${index}`,
+    original_filename: hasIdentifier(file?.original_filename)
+      ? String(file.original_filename)
+      : `attachment-${index + 1}`,
+    mime_type: file?.mime_type ? String(file.mime_type) : null,
+    file_size:
+      Number.isFinite(Number(file?.file_size)) && Number(file.file_size) >= 0
+        ? Number(file.file_size)
+        : null,
+    status: "pending",
+    final_filename: null,
+    nas_path: null,
+    checksum_sha256: null,
+    error: null,
+  }));
+  const now = new Date().toISOString();
+  const intake = {
+    intake_id: `INT_${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,
+    gmail_message_id: String(body.gmail_message_id),
+    gmail_thread_id: body.gmail_thread_id ? String(body.gmail_thread_id) : null,
+    sender: body.sender ? String(body.sender) : null,
+    recipient: body.recipient ? String(body.recipient) : null,
+    subject: body.subject ? String(body.subject) : null,
+    received_at: body.received_at ? String(body.received_at) : now,
+    raw_snippet: body.raw_snippet ? String(body.raw_snippet) : null,
+    intent,
+    inquiry_text: body.inquiry_text ? String(body.inquiry_text).trim() : "",
+    extracted_order_id: extractedOrderId,
+    order_id: order?.order_id ?? null,
+    external_order_id: order?.external_order_id ?? null,
+    platform: order?.platform ?? null,
+    customer_notes: body.customer_notes ? String(body.customer_notes).trim() : "",
+    extraction_confidence: body.extraction_confidence ?? null,
+    match_status:
+      intent === "order_submission"
+        ? order
+          ? "matched"
+          : extractedOrderId
+            ? "unmatched"
+            : "missing"
+        : "not_applicable",
+    status:
+      intent === "inquiry"
+        ? "inquiry"
+        : intent === "other"
+          ? "needs_review"
+          : order && attachments.length > 0
+            ? "processing"
+            : "needs_review",
+    attachments,
+    created_at: now,
+    updated_at: now,
+  };
+  db.email_intakes.push(intake);
+
+  if (intent === "order_submission" && (!order || attachments.length === 0)) {
+    const reason = attachments.length === 0 ? "no_attachment" : "missing_order_information";
+    addReviewCaseRecord(db, {
+      intake_id: intake.intake_id,
+      order_id: intake.order_id,
+      external_order_id: intake.external_order_id,
+      reason,
+      priority: "normal",
+      source_workflow: "Gmail - Adding the orders",
+      source_node: "Register Email Intake",
+      summary:
+        reason === "no_attachment"
+          ? "The customer email did not include a file"
+          : extractedOrderId
+            ? `The extracted order ID ${extractedOrderId} was not found`
+            : "No order ID could be extracted from the customer email",
+      confidence: body.extraction_confidence,
+      dedupe_key: `${intake.intake_id}:${reason}`,
+      context: {
+        gmail_message_id: intake.gmail_message_id,
+        sender: intake.sender,
+        subject: intake.subject,
+        extracted_order_id: extractedOrderId,
+        customer_notes: intake.customer_notes,
+        attachment_names: attachments.map((file) => file.original_filename),
+      },
+    });
+  } else if (intent === "other") {
+    addReviewCaseRecord(db, {
+      intake_id: intake.intake_id,
+      reason: "customer_contact_required",
+      priority: "normal",
+      source_workflow: "Gmail - Adding the orders",
+      source_node: "Route Email Intent (fallback)",
+      summary: "The email was not a clear order submission or supported inquiry",
+      confidence: body.extraction_confidence,
+      dedupe_key: `${intake.intake_id}:customer_contact_required`,
+      context: {
+        gmail_message_id: intake.gmail_message_id,
+        sender: intake.sender,
+        subject: intake.subject,
+        inquiry_text: intake.inquiry_text,
+        customer_notes: intake.customer_notes,
+        attachment_names: attachments.map((file) => file.original_filename),
+      },
+    });
+  }
+
+  writeDB(db);
+  res.status(201).json({ created: true, intake });
+});
+
+app.get("/api/email-intakes", (req, res) => {
+  const intakes = [...(readDB().email_intakes || [])]
+    .filter(
+      (item) =>
+        req.query.status === undefined || item.status === req.query.status
+    )
+    .sort((a, b) => new Date(b.received_at) - new Date(a.received_at));
+  res.json(intakes);
+});
+
+app.get("/api/email-intakes/:intake_id", (req, res) => {
+  const intake = (readDB().email_intakes || []).find(
+    (item) => item.intake_id === req.params.intake_id
+  );
+  if (!intake) return res.status(404).json({ error: "email intake not found" });
+  res.json(intake);
+});
+
+app.post("/api/email-intakes/:intake_id/files", (req, res) => {
+  const body = req.body || {};
+  if (!hasIdentifier(body.attachment_key) && !hasIdentifier(body.original_filename)) {
+    return res
+      .status(400)
+      .json({ error: "attachment_key or original_filename is required" });
+  }
+  if (!["stored", "failed"].includes(body.status)) {
+    return res.status(400).json({ error: "status must be stored or failed" });
+  }
+
+  const db = readDB();
+  const intake = (db.email_intakes || []).find(
+    (item) => item.intake_id === req.params.intake_id
+  );
+  if (!intake) return res.status(404).json({ error: "email intake not found" });
+
+  let file = intake.attachments.find(
+    (candidate) =>
+      (hasIdentifier(body.attachment_key) &&
+        candidate.attachment_key === String(body.attachment_key)) ||
+      (hasIdentifier(body.original_filename) &&
+        candidate.original_filename === String(body.original_filename))
+  );
+  if (!file) {
+    file = {
+      attachment_key: body.attachment_key || `attachment_${intake.attachments.length}`,
+      original_filename: body.original_filename || "attachment",
+      mime_type: body.mime_type ?? null,
+      file_size: body.file_size ?? null,
+    };
+    intake.attachments.push(file);
+  }
+
+  Object.assign(file, {
+    status: body.status,
+    final_filename: body.final_filename ?? file.final_filename ?? null,
+    nas_path: body.nas_path ?? file.nas_path ?? null,
+    checksum_sha256: body.checksum_sha256 ?? file.checksum_sha256 ?? null,
+    error: body.error ?? null,
+  });
+  const statuses = intake.attachments.map((attachment) => attachment.status);
+  intake.status = statuses.includes("failed")
+    ? "needs_review"
+    : statuses.length > 0 && statuses.every((status) => status === "stored")
+      ? "completed"
+      : "processing";
+  intake.updated_at = new Date().toISOString();
+
+  if (body.status === "failed") {
+    addReviewCaseRecord(db, {
+      intake_id: intake.intake_id,
+      order_id: intake.order_id,
+      external_order_id: intake.external_order_id,
+      reason: "upload_failed",
+      source_workflow: "Gmail - Adding the orders",
+      source_node: "Upload Email Attachment",
+      summary: `Could not store ${file.original_filename}`,
+      error_message: body.error ?? null,
+      dedupe_key: `${intake.intake_id}:${file.attachment_key}:upload_failed`,
+      context: {
+        customer_notes: intake.customer_notes,
+        sender: intake.sender,
+        subject: intake.subject,
+        original_filename: file.original_filename,
+      },
+    });
+  }
+
+  writeDB(db);
+  res.json({ intake, file });
 });
 
 // ---------------------------------------------------------------------

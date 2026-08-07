@@ -45,6 +45,49 @@ npm run reset-db
 
 ## Endpoints
 
+### Gmail order intake
+
+`POST /api/email-intakes` records one incoming Gmail message, the AI-extracted
+order ID and customer instructions, plus attachment metadata. The API matches
+the extracted ID against both `order_id` and `external_order_id`. The Gmail
+message ID is the idempotency key, so polling or retrying does not duplicate an
+intake.
+
+Matched messages with files start in `processing`. A missing/unknown order ID or
+a message without files starts in `needs_review` and automatically creates a
+linked human-review case whose context includes the customer notes.
+
+```bash
+curl -X POST http://localhost:3000/api/email-intakes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "gmail_message_id": "18f-example",
+    "sender": "Ali <ali@example.com>",
+    "subject": "Files for order 260727QURVFYCT",
+    "extracted_order_id": "260727QURVFYCT",
+    "customer_notes": "Remove the background",
+    "extraction_confidence": 0.97,
+    "attachments": [{
+      "attachment_key": "attachment_0",
+      "original_filename": "customer-design.pdf",
+      "mime_type": "application/pdf",
+      "file_size": 5242880
+    }]
+  }'
+```
+
+After n8n uploads each file to the Ramo receiver, it reports the result with
+`POST /api/email-intakes/:intake_id/files`. A failed upload moves the intake to
+`needs_review` and creates an `upload_failed` case; when every file is stored,
+the intake becomes `completed`.
+
+Read endpoints:
+
+```
+GET /api/email-intakes
+GET /api/email-intakes/:intake_id
+```
+
 ### 1. `GET /api/attachments/:attachment_id/download`
 
 Returns the raw binary file for that attachment — exactly what your
@@ -256,6 +299,12 @@ orders[]
   order_id, external_order_id, platform, customer_name,
   phone_number, email, items[]
 
+email_intakes[]
+  intake_id, gmail_message_id, gmail_thread_id, sender, recipient,
+  subject, received_at, raw_snippet, extracted_order_id, order_id,
+  external_order_id, platform, customer_notes, extraction_confidence,
+  match_status, status, attachments[], created_at, updated_at
+
 attachments[]
   attachment_id, job_id, order_id, order_item_id,
   product_name, sku, variation, quantity,
@@ -268,7 +317,7 @@ jobs[]
   nas_path, checksum_sha256, error, created_at, updated_at
 
 review_cases[]
-  review_id, job_id, order_id, external_order_id, attachment_id,
+  review_id, intake_id, job_id, order_id, external_order_id, attachment_id,
   reason, status, priority, source_workflow, source_node, summary,
   error_message, confidence, context, dedupe_key, assigned_to,
   reviewer_notes, resolution, corrected_data, customer_contacted_at,
