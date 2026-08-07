@@ -41,13 +41,7 @@ app.post("/api/orders", async (req, res) => {
     raw_payload,
   } = req.body || {};
 
-if (!(webhook_url && attachment_id) && !(platform && external_order_id)) {
-  return res.status(400).json({
-    error:
-      "either webhook_url+attachment_id or platform+external_order_id is required",
-  });
-}
-
+  if (!platform || !external_order_id) {
     return res
       .status(400)
       .json({ error: "platform and external_order_id are required" });
