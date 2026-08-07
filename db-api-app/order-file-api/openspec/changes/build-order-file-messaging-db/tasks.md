@@ -33,6 +33,15 @@
       PostgREST rewrite
 - [ ] Removed in this pass, not yet re-added: `POST /api/simulate/fire-webhook`
       (was tightly coupled to db.json's shape) — flag if still needed
+- [ ] Port the `review-cases` feature (merged into `main` in parallel by
+      someone else, 2026-08-07, still `db.json`-based) onto the
+      `support_cases` table. Field vocabularies differ (main's review_cases
+      has 9 reasons incl. file-processing errors like `download_failed`/
+      `unsupported_file`; support_cases has 9 different customer-facing
+      reasons) — needs a real reconciliation pass, not a rename. Dropped
+      from server.js during the main merge per explicit user decision
+      ("my branch wins, port later") — not lost, `db.json`'s version is
+      still in git history on the pre-merge main commit (`3383110`).
 - [ ] The raw Postgres connection string/password is still not available
       (not retrievable via the Management API — Supabase never exposes it
       after creation; resetting it would be disruptive and wasn't done
