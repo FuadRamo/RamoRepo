@@ -16,21 +16,28 @@
 - [x] Apply the migration to the live Supabase project (2026-08-06, via the
       Management API `database/query` endpoint — see db.js header)
 - [x] Seed the live DB with the existing mock's example order/items/files
-- [x] Wire `server.js` to Postgres — done via `db.js`, a **temporary**
-      Management-API-based bridge (no service_role key or connection string
-      was available). Rate-limited to 60 req/min and uses an
-      account-level credential — replace with `pg`/`supabase-js` +
-      service_role before real traffic. See db.js header comment.
+- [x] Wire `server.js` to Postgres — done via `db.js`, using PostgREST +
+      the `service_role` key (fetched once via the Management API
+      `GET /v1/projects/:ref/api-keys?reveal=true` endpoint, then used
+      directly — not stored/used anywhere except this gitignored `.env`).
+      Superseded an earlier version that used the Management API
+      `database/query` endpoint directly (account-wide credential,
+      60 req/min limit) — this is the correct server-side pattern per
+      Supabase's own RLS docs (service_role bypasses RLS, kept
+      server-side-only). See db.js header comment.
 - [x] Add `POST /api/messages`, `GET /api/messages`, `POST /api/orders`,
       `GET /api/orders/:id`, `PATCH /api/orders/:id`,
       `POST /api/webhooks/whatsapp` (text/image/document, see
       study/07-whatsapp-webhook-format.md) — implemented and tested live
-      against the Supabase project (2026-08-06/07)
+      against the Supabase project (2026-08-06/07), retested after the
+      PostgREST rewrite
 - [ ] Removed in this pass, not yet re-added: `POST /api/simulate/fire-webhook`
       (was tightly coupled to db.json's shape) — flag if still needed
-- [ ] Get a service_role key or direct Postgres connection string from the
-      user and swap db.js for a real driver (blocks: production scale, and
-      removes the account-level-credential risk noted above)
+- [ ] The raw Postgres connection string/password is still not available
+      (not retrievable via the Management API — Supabase never exposes it
+      after creation; resetting it would be disruptive and wasn't done
+      without asking). Only matters if something needs a direct `pg`
+      connection instead of PostgREST — not currently blocking anything.
 - [ ] Decide + implement port-3000 API auth (deferred per explicit user
       decision this session — revisit before any public/external exposure;
       now more urgent since the API is live-writing to production data)

@@ -2,10 +2,8 @@
  * order-file-api
  * -------------------------------------------------------------------------
  * Backed by the live Supabase Postgres schema (see
- * supabase/migrations/20260806140000_init_schema.sql) via db.js — see that
- * file for why the DB access pattern is temporary and what to replace it
- * with (service_role key or a direct connection string, neither provided
- * yet).
+ * supabase/migrations/20260806140000_init_schema.sql) via db.js, which uses
+ * PostgREST + the service_role key — see db.js header for why.
  *
  * No auth is enforced right now (explicit decision, internal network only
  * — see study/02-supabase-schema-design.md and study/05-secrets-handling.md).
@@ -26,6 +24,11 @@ const PORT = process.env.PORT || 3000;
 // Orders
 // ---------------------------------------------------------------------
 
+async function getOrderWithItems(orderId) {
+  const rows = await db.select("orders", `?id=eq.${encodeURIComponent(orderId)}&select=*,order_items(*)`);
+  return rows[0] || null;
+}
+
 app.post("/api/orders", async (req, res) => {
   const {
     platform,
@@ -45,46 +48,44 @@ app.post("/api/orders", async (req, res) => {
   }
 
   try {
-    const existing = await db.query(
-      `select id from orders where platform = $1 and external_order_id = $2`,
-      [platform, external_order_id]
+    const existing = await db.select(
+      "orders",
+      `?platform=eq.${encodeURIComponent(platform)}&external_order_id=eq.${encodeURIComponent(external_order_id)}`
     );
     if (existing.length > 0) {
-      const order = await getOrderWithItems(existing[0].id);
-      return res.json(order);
+      return res.json(await getOrderWithItems(existing[0].id));
     }
 
-    const [{ id: orderId }] = await db.query(
-      `insert into orders (platform, external_order_id, tracking_number, customer_name, phone_number, email, raw_payload)
-       values ($1, $2, $3, $4, $5, $6, $7)
-       returning id`,
-      [
+    const [order] = await db.insert("orders", [
+      {
         platform,
         external_order_id,
-        tracking_number || null,
-        customer_name || null,
-        phone_number || null,
-        email || null,
-        raw_payload ? JSON.stringify(raw_payload) : null,
-      ]
-    );
+        tracking_number: tracking_number || null,
+        customer_name: customer_name || null,
+        phone_number: phone_number || null,
+        email: email || null,
+        raw_payload: raw_payload || null,
+      },
+    ]);
 
-    await db.query(
-      `insert into order_status_events (order_id, from_status, to_status, reason, changed_by)
-       values ($1, null, 'new', 'order created', 'api')`,
-      [orderId]
-    );
+    await db.insert("order_status_events", [
+      { order_id: order.id, from_status: null, to_status: "new", reason: "order created", changed_by: "api" },
+    ]);
 
-    for (const item of items || []) {
-      await db.query(
-        `insert into order_items (order_id, product_name, sku, variation, quantity)
-         values ($1, $2, $3, $4, $5)`,
-        [orderId, item.product_name || null, item.sku || null, item.variation || null, item.quantity || null]
+    if (items && items.length) {
+      await db.insert(
+        "order_items",
+        items.map((item) => ({
+          order_id: order.id,
+          product_name: item.product_name || null,
+          sku: item.sku || null,
+          variation: item.variation || null,
+          quantity: item.quantity || null,
+        }))
       );
     }
 
-    const order = await getOrderWithItems(orderId);
-    res.status(201).json(order);
+    res.status(201).json(await getOrderWithItems(order.id));
   } catch (err) {
     res.status(500).json({ error: "failed to create order", details: err.message });
   }
@@ -92,7 +93,7 @@ app.post("/api/orders", async (req, res) => {
 
 app.get("/api/orders", async (req, res) => {
   try {
-    const rows = await db.query(`select * from orders order by created_at desc`, [], { readOnly: true });
+    const rows = await db.select("orders", "?select=*,order_items(*)&order=created_at.desc");
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: "failed to list orders", details: err.message });
@@ -114,32 +115,28 @@ app.patch("/api/orders/:id", async (req, res) => {
   if (!status) return res.status(400).json({ error: "status is required" });
 
   try {
-    const current = await db.query(`select status from orders where id = $1`, [req.params.id]);
+    const current = await db.select("orders", `?id=eq.${encodeURIComponent(req.params.id)}&select=status`);
     if (current.length === 0) return res.status(404).json({ error: "order not found" });
 
-    await db.query(
-      `update orders set status = $1, review_reason = $2 where id = $3`,
-      [status, review_reason || null, req.params.id]
-    );
-    await db.query(
-      `insert into order_status_events (order_id, from_status, to_status, reason, changed_by)
-       values ($1, $2, $3, $4, $5)`,
-      [req.params.id, current[0].status, status, reason || null, changed_by || "api"]
-    );
+    await db.update("orders", `?id=eq.${encodeURIComponent(req.params.id)}`, {
+      status,
+      review_reason: review_reason || null,
+    });
+    await db.insert("order_status_events", [
+      {
+        order_id: req.params.id,
+        from_status: current[0].status,
+        to_status: status,
+        reason: reason || null,
+        changed_by: changed_by || "api",
+      },
+    ]);
 
-    const order = await getOrderWithItems(req.params.id);
-    res.json(order);
+    res.json(await getOrderWithItems(req.params.id));
   } catch (err) {
     res.status(500).json({ error: "failed to update order", details: err.message });
   }
 });
-
-async function getOrderWithItems(orderId) {
-  const orders = await db.query(`select * from orders where id = $1`, [orderId]);
-  if (orders.length === 0) return null;
-  const items = await db.query(`select * from order_items where order_id = $1`, [orderId]);
-  return { ...orders[0], items };
-}
 
 // ---------------------------------------------------------------------
 // Messages
@@ -162,23 +159,20 @@ app.post("/api/messages", async (req, res) => {
   if (!platform) return res.status(400).json({ error: "platform is required" });
 
   try {
-    const [message] = await db.query(
-      `insert into messages (order_id, platform, conversation_id, external_message_id, sender, receiver, direction, content, message_time, raw_payload)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       returning *`,
-      [
-        order_id || null,
+    const [message] = await db.insert("messages", [
+      {
+        order_id: order_id || null,
         platform,
-        conversation_id || null,
-        external_message_id || null,
-        sender || null,
-        receiver || null,
-        direction || null,
-        content || null,
-        message_time || null,
-        raw_payload ? JSON.stringify(raw_payload) : null,
-      ]
-    );
+        conversation_id: conversation_id || null,
+        external_message_id: external_message_id || null,
+        sender: sender || null,
+        receiver: receiver || null,
+        direction: direction || null,
+        content: content || null,
+        message_time: message_time || null,
+        raw_payload: raw_payload || null,
+      },
+    ]);
     res.status(201).json(message);
   } catch (err) {
     res.status(500).json({ error: "failed to create message", details: err.message });
@@ -187,21 +181,14 @@ app.post("/api/messages", async (req, res) => {
 
 app.get("/api/messages", async (req, res) => {
   const { order_id, platform, conversation_id } = req.query;
-  const clauses = [];
-  const params = [];
-
-  if (order_id) { params.push(order_id); clauses.push(`order_id = $${params.length}`); }
-  if (platform) { params.push(platform); clauses.push(`platform = $${params.length}`); }
-  if (conversation_id) { params.push(conversation_id); clauses.push(`conversation_id = $${params.length}`); }
-
-  const where = clauses.length ? `where ${clauses.join(" and ")}` : "";
+  const filters = [];
+  if (order_id) filters.push(`order_id=eq.${encodeURIComponent(order_id)}`);
+  if (platform) filters.push(`platform=eq.${encodeURIComponent(platform)}`);
+  if (conversation_id) filters.push(`conversation_id=eq.${encodeURIComponent(conversation_id)}`);
+  filters.push("order=message_time.asc.nullslast,created_at.asc");
 
   try {
-    const rows = await db.query(
-      `select * from messages ${where} order by message_time nulls last, created_at`,
-      params,
-      { readOnly: true }
-    );
+    const rows = await db.select("messages", `?${filters.join("&")}`);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: "failed to list messages", details: err.message });
@@ -224,25 +211,27 @@ app.post("/api/webhooks/whatsapp", async (req, res) => {
         const messageTime = msg.timestamp
           ? new Date(Number(msg.timestamp) * 1000).toISOString()
           : null;
-
         const content = msg.type === "text" ? msg.text?.body ?? null : null;
 
-        const [message] = await db.query(
-          `insert into messages (platform, conversation_id, external_message_id, sender, direction, content, message_time, raw_payload)
-           values ('whatsapp', $1, $2, $3, 'inbound', $4, $5, $6)
-           returning *`,
-          [msg.from, msg.id, msg.from, content, messageTime, JSON.stringify(msg)]
-        );
+        const [message] = await db.insert("messages", [
+          {
+            platform: "whatsapp",
+            conversation_id: msg.from,
+            external_message_id: msg.id,
+            sender: msg.from,
+            direction: "inbound",
+            content,
+            message_time: messageTime,
+            raw_payload: msg,
+          },
+        ]);
 
         let file = null;
         if (msg.type === "image" || msg.type === "document") {
           const media = msg[msg.type];
-          const [fileRow] = await db.query(
-            `insert into files (message_id, original_filename, mime_type)
-             values ($1, $2, $3)
-             returning *`,
-            [message.id, media.filename || null, media.mime_type || null]
-          );
+          const [fileRow] = await db.insert("files", [
+            { message_id: message.id, original_filename: media.filename || null, mime_type: media.mime_type || null },
+          ]);
           file = fileRow;
         }
 
@@ -261,7 +250,7 @@ app.post("/api/webhooks/whatsapp", async (req, res) => {
 
 app.get("/api/attachments", async (req, res) => {
   try {
-    const rows = await db.query(`select * from files order by created_at desc`, [], { readOnly: true });
+    const rows = await db.select("files", "?select=*&order=created_at.desc");
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: "failed to list files", details: err.message });
@@ -270,7 +259,7 @@ app.get("/api/attachments", async (req, res) => {
 
 app.get("/api/attachments/:attachment_id/download", async (req, res) => {
   try {
-    const rows = await db.query(`select * from files where id = $1`, [req.params.attachment_id]);
+    const rows = await db.select("files", `?id=eq.${encodeURIComponent(req.params.attachment_id)}`);
     if (rows.length === 0) return res.status(404).json({ error: "attachment not found" });
     const file = rows[0];
 
@@ -291,7 +280,7 @@ app.get("/api/attachments/:attachment_id/download", async (req, res) => {
 
 app.get("/api/file-jobs", async (req, res) => {
   try {
-    const rows = await db.query(`select * from file_jobs order by created_at desc`, [], { readOnly: true });
+    const rows = await db.select("file_jobs", "?select=*&order=created_at.desc");
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: "failed to list file jobs", details: err.message });
@@ -300,7 +289,7 @@ app.get("/api/file-jobs", async (req, res) => {
 
 app.get("/api/file-jobs/:job_id", async (req, res) => {
   try {
-    const rows = await db.query(`select * from file_jobs where id = $1`, [req.params.job_id]);
+    const rows = await db.select("file_jobs", `?id=eq.${encodeURIComponent(req.params.job_id)}`);
     if (rows.length === 0) return res.status(404).json({ error: "job not found" });
     res.json(rows[0]);
   } catch (err) {
@@ -318,20 +307,17 @@ app.patch("/api/file-jobs/:job_id", async (req, res) => {
   }
 
   try {
-    const jobs = await db.query(`select * from file_jobs where id = $1`, [req.params.job_id]);
+    const jobs = await db.select("file_jobs", `?id=eq.${encodeURIComponent(req.params.job_id)}`);
     if (jobs.length === 0) return res.status(404).json({ error: "job not found" });
 
-    const [job] = await db.query(
-      `update file_jobs
-       set status = $1, final_filename = coalesce($2, final_filename),
-           checksum_sha256 = coalesce($3, checksum_sha256), error = $4, updated_at = now()
-       where id = $5
-       returning *`,
-      [status, final_filename || null, checksum_sha256 || null, error || null, req.params.job_id]
-    );
+    const patch = { status, error: error || null, updated_at: new Date().toISOString() };
+    if (final_filename) patch.final_filename = final_filename;
+    if (checksum_sha256) patch.checksum_sha256 = checksum_sha256;
+
+    const [job] = await db.update("file_jobs", `?id=eq.${encodeURIComponent(req.params.job_id)}`, patch);
 
     if (nas_path) {
-      await db.query(`update files set nas_path = $1 where id = $2`, [nas_path, job.file_id]);
+      await db.update("files", `?id=eq.${encodeURIComponent(job.file_id)}`, { nas_path });
     }
 
     res.json({ ok: true, job });
@@ -341,5 +327,5 @@ app.patch("/api/file-jobs/:job_id", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`order-file-api listening on http://localhost:${PORT} (backed by Supabase)`);
+  console.log(`order-file-api listening on http://localhost:${PORT} (backed by Supabase via PostgREST)`);
 });
